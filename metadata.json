@@ -1,0 +1,9 @@
+{
+  "name": "Copy of AfriCrypto Mobile Wallet",
+  "description": "A comprehensive mobile-first cryptocurrency wallet and P2P trading platform tailored for African users, featuring asset management, transaction history, P2P offers, user profiles, and market insights powered by Gemini API.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "prompt": "",
+  "majorCapabilities": []
+}
