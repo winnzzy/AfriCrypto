@@ -13,10 +13,11 @@ import {
   AppNotification,
   TransactionType // Added TransactionType
 } from './types';
-import { AFRICAN_COUNTRIES_DATA, DEFAULT_USER_ID, MOCK_MARKET_HIGHLIGHTS, MOCK_INFO_CARD_DATA } from './constants';
-import { apiService } from './services/apiService';
+import { AFRICAN_COUNTRIES_DATA, MOCK_MARKET_HIGHLIGHTS, MOCK_INFO_CARD_DATA } from './constants';
+import { apiService, AUTH_EXPIRED_EVENT } from './services/apiService';
 
 // Import Components
+import AuthView from './components/AuthView';
 import MobileHeader from './components/MobileHeader';
 import WalletOverview from './components/WalletOverview';
 import CryptoList from './components/CryptoList';
@@ -51,8 +52,13 @@ const App: React.FC = () => {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [walletData, setWalletData] = useState<WalletData | null>(null);
   const [transactions, setTransactions] = useState<Transaction[] | null>(null);
-  
-  const [isLoading, setIsLoading] = useState(true); 
+
+  // Gates the whole app behind auth. authChecking covers the brief window
+  // where we're trying to silently restore a session from a stored refresh
+  // token before deciding whether to show the login screen.
+  const [authChecking, setAuthChecking] = useState(true);
+
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
   const [showQRScanner, setShowQRScanner] = useState(false);
@@ -76,20 +82,19 @@ const App: React.FC = () => {
 
   const currentCountryInfo = userProfile ? AFRICAN_COUNTRIES_DATA[userProfile.country] : AFRICAN_COUNTRIES_DATA['Nigeria'];
 
-  const loadInitialData = useCallback(async (isRetry = false) => {
-    if(!isRetry) setIsLoading(true); else addNotification("Retrying data load...", "info");
+  // Loads wallet + transaction data for an already-known profile (from login,
+  // signup, or a restored session) — unlike the old loadInitialData, it no
+  // longer fetches the profile itself since the caller already has it.
+  const loadAppData = useCallback(async (profile: UserProfile, isRetry = false) => {
+    if (!isRetry) setIsLoading(true); else addNotification("Retrying data load...", "info");
     setError(null);
     try {
-      const profilePromise = apiService.fetchUserProfile(DEFAULT_USER_ID);
-      const transactionsPromise = apiService.fetchTransactionHistory(DEFAULT_USER_ID);
-      
-      const [profile, fetchedTransactions] = await Promise.all([profilePromise, transactionsPromise]);
-      setUserProfile(profile);
-      
-      const fetchedWalletData = await apiService.fetchWalletData(DEFAULT_USER_ID, profile.country);
+      const [fetchedWalletData, fetchedTransactions] = await Promise.all([
+        apiService.fetchWalletData(profile.userId, profile.country),
+        apiService.fetchTransactionHistory(profile.userId),
+      ]);
       setWalletData(fetchedWalletData);
       setTransactions(fetchedTransactions);
-
     } catch (err) {
       console.error("Failed to load initial data:", err);
       setError("Could not load app data. Please check your connection and try again.");
@@ -99,9 +104,45 @@ const App: React.FC = () => {
     }
   }, [addNotification]);
 
+  const handleLogout = useCallback(() => {
+    apiService.logout();
+    setUserProfile(null);
+    setWalletData(null);
+    setTransactions(null);
+    setActiveTab(ActiveTab.HOME);
+  }, []);
+
+  const handleAuthenticated = useCallback(async (profile: UserProfile) => {
+    setUserProfile(profile);
+    await loadAppData(profile);
+  }, [loadAppData]);
+
+  // On boot, try to silently resume a session from a stored refresh token
+  // before falling back to the login screen.
   useEffect(() => {
-    loadInitialData();
-  }, [loadInitialData]);
+    (async () => {
+      const restoredProfile = await apiService.restoreSession();
+      if (restoredProfile) {
+        setUserProfile(restoredProfile);
+        await loadAppData(restoredProfile);
+      }
+      setAuthChecking(false);
+    })();
+    // Only ever run once on mount — loadAppData is stable via useCallback.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Fires if any API call's token refresh attempt fails (e.g. the refresh
+  // token itself expired or was revoked) — drops back to the login screen
+  // from anywhere in the app, not just whichever call site hit it.
+  useEffect(() => {
+    const handleExpired = () => {
+      handleLogout();
+      addNotification("Your session has expired. Please log in again.", "error");
+    };
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleExpired);
+  }, [handleLogout, addNotification]);
 
   useEffect(() => {
     const handleOnline = () => { setIsOnline(true); addNotification("You are back online!", "success");}
@@ -150,26 +191,26 @@ const App: React.FC = () => {
     if (!userProfile) return;
     addNotification("Refreshing wallet data...", "info");
     try {
-      const refreshedWalletData = await apiService.fetchWalletData(DEFAULT_USER_ID, userProfile.country);
+      const refreshedWalletData = await apiService.fetchWalletData(userProfile.userId, userProfile.country);
       setWalletData(refreshedWalletData);
       // Also refresh transactions as part of a general refresh
-      const refreshedTransactions = await apiService.fetchTransactionHistory(DEFAULT_USER_ID);
+      const refreshedTransactions = await apiService.fetchTransactionHistory(userProfile.userId);
       setTransactions(refreshedTransactions);
       addNotification("Wallet data refreshed!", "success");
     } catch (e) {
       addNotification("Failed to refresh wallet data.", "error");
     }
   };
-  
+
   const handleUpdateCountry = async (newCountry: string) => {
     if (!userProfile || userProfile.country === newCountry) return;
     const oldCountry = userProfile.country;
     addNotification(`Updating location to ${newCountry}...`, "info");
-    setUserProfile(prev => prev ? { ...prev, country: newCountry } : null); 
+    setUserProfile(prev => prev ? { ...prev, country: newCountry } : null);
     try {
-      await apiService.updateUserProfile(DEFAULT_USER_ID, { country: newCountry });
+      await apiService.updateUserProfile(userProfile.userId, { country: newCountry });
       // Wallet data needs to be re-fetched for the new country context (especially fiat)
-      const refreshedWalletData = await apiService.fetchWalletData(DEFAULT_USER_ID, newCountry);
+      const refreshedWalletData = await apiService.fetchWalletData(userProfile.userId, newCountry);
       setWalletData(refreshedWalletData);
       addNotification(`Location updated to ${newCountry}.`, "success");
     } catch (e) {
@@ -182,7 +223,7 @@ const App: React.FC = () => {
      if (!userProfile) return;
      setUserProfile(prev => prev ? { ...prev, notificationsEnabled: enabled } : null);
      try {
-       await apiService.updateUserProfile(DEFAULT_USER_ID, { notificationsEnabled: enabled });
+       await apiService.updateUserProfile(userProfile.userId, { notificationsEnabled: enabled });
        addNotification(`Notifications ${enabled ? 'enabled' : 'disabled'}.`, "success");
      } catch (e) {
        setUserProfile(prev => prev ? { ...prev, notificationsEnabled: !enabled } : null);
@@ -191,17 +232,17 @@ const App: React.FC = () => {
   };
 
   const handleSendCrypto = async (cryptoSymbol: string, recipientAddress: string, amount: string) => {
+    if (!userProfile) return;
     try {
-      const newTransaction = await apiService.sendCrypto({ userId: DEFAULT_USER_ID, cryptoSymbol, recipientAddress, amount });
+      const newTransaction = await apiService.sendCrypto({ userId: userProfile.userId, cryptoSymbol, recipientAddress, amount });
       setTransactions(prev => prev ? [newTransaction, ...prev] : [newTransaction]);
-      if (userProfile) { // Re-fetch wallet data after send
-        const refreshedWalletData = await apiService.fetchWalletData(DEFAULT_USER_ID, userProfile.country);
-        setWalletData(refreshedWalletData);
-      }
+      // Re-fetch wallet data after send
+      const refreshedWalletData = await apiService.fetchWalletData(userProfile.userId, userProfile.country);
+      setWalletData(refreshedWalletData);
       addNotification(`Successfully sent ${amount} ${cryptoSymbol}.`, "success");
     } catch (err: any) {
       addNotification(err.message || `Failed to send ${cryptoSymbol}.`, "error");
-      throw err; 
+      throw err;
     }
   };
 
@@ -226,7 +267,7 @@ const App: React.FC = () => {
     // Re-fetch wallet data as bill payment affects balance
     if (userProfile) {
         try {
-            const refreshedWalletData = await apiService.fetchWalletData(DEFAULT_USER_ID, userProfile.country);
+            const refreshedWalletData = await apiService.fetchWalletData(userProfile.userId, userProfile.country);
             setWalletData(refreshedWalletData);
         } catch(e) {
             addNotification("Error updating wallet after bill payment.", "error");
@@ -237,11 +278,21 @@ const App: React.FC = () => {
 
 
   const renderContent = () => {
-    if (isLoading && !userProfile) { 
+    if (isLoading && walletData === null && transactions === null) {
       return <div className="flex justify-center items-center h-[calc(100vh-200px)]"><LoadingSpinner text="Loading AfriCrypto..." size="lg" /></div>;
     }
-    if (error && !userProfile) { 
-      return <div className="p-4"><ErrorMessage title="Application Error" message={error} /> <button onClick={() => loadInitialData(true)} className="mt-4 bg-blue-500 text-white px-4 py-2 rounded">Retry</button></div>;
+    if (error && walletData === null && transactions === null) {
+      return (
+        <div className="p-4">
+          <ErrorMessage title="Application Error" message={error} />
+          <button
+            onClick={() => userProfile && loadAppData(userProfile, true)}
+            className="mt-4 bg-blue-500 text-white px-4 py-2 rounded"
+          >
+            Retry
+          </button>
+        </div>
+      );
     }
 
     switch (activeTab) {
@@ -304,11 +355,12 @@ const App: React.FC = () => {
       case ActiveTab.HISTORY:
         return <TransactionHistory transactions={transactions} isLoading={isLoading && transactions === null} />;
       case ActiveTab.PROFILE:
-        return <ProfileView 
-                  userProfile={userProfile} 
-                  africanCountries={AFRICAN_COUNTRIES_DATA} 
+        return <ProfileView
+                  userProfile={userProfile}
+                  africanCountries={AFRICAN_COUNTRIES_DATA}
                   onUpdateCountry={handleUpdateCountry}
                   onToggleNotifications={handleToggleNotifications}
+                  onLogout={handleLogout}
                />;
       case ActiveTab.SEND:
         return <SendCryptoView walletData={walletData} onSend={handleSendCrypto} onShowQRScanner={() => setShowQRScanner(true)} />;
@@ -320,6 +372,20 @@ const App: React.FC = () => {
   };
   
   const cryptoForAnalysis = showMarketAnalysisModal && walletData?.crypto[showMarketAnalysisModal];
+
+  // Still resolving whether a stored refresh token is good for anything —
+  // avoid flashing the login screen for users with a valid session.
+  if (authChecking) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <LoadingSpinner text="Loading AfriCrypto..." size="lg" />
+      </div>
+    );
+  }
+
+  if (!userProfile) {
+    return <AuthView onAuthenticated={handleAuthenticated} />;
+  }
 
   return (
     <div className="min-h-screen bg-slate-900 text-gray-100 flex flex-col">

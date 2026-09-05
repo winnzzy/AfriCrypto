@@ -1,9 +1,7 @@
 
 import { AfricanCountriesData, CryptoAsset, FiatAsset, MarketHighlightItem, BillCategory, Biller } from './types';
 
-export const API_BASE_URL = '/api'; // Mock, not actually used for network calls in this setup
 export const DEFAULT_USER_ID = 'user123';
-export const GEMINI_TEXT_MODEL = 'gemini-2.5-flash-preview-04-17';
 
 export const AFRICAN_COUNTRIES_DATA: AfricanCountriesData = {
     'Nigeria': { currency: 'NGN', symbol: '₦', flag: '🇳🇬', paymentMethods: ['Bank Transfer', 'PalmPay', 'OPay', 'Kuda'] },

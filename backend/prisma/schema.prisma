@@ -1,0 +1,191 @@
+// Prisma schema for AfriCrypto.
+// Field shapes are modeled on the frontend's /types.ts interfaces (WalletData,
+// Transaction, P2POffer, UserProfile, Biller, ...) so persisted data maps
+// cleanly onto what the UI already expects. Formatted display strings from
+// the mock layer (e.g. "0.01 - 0.5 BTC") are stored as separate numeric
+// fields here and composed back into that shape in the service layer.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TransactionType {
+  BUY
+  SELL
+  SEND
+  RECEIVE
+  P2P_BUY
+  P2P_SELL
+  BILL_PAYMENT
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum P2PTradeType {
+  BUY
+  SELL
+}
+
+// Maps to UserProfile in types.ts, plus auth fields (email/passwordHash)
+// that the mock layer never needed because it had no real accounts.
+model User {
+  id                   String   @id @default(cuid())
+  email                String   @unique
+  passwordHash         String
+  username             String
+  country              String
+  isVerified           Boolean  @default(false)
+  p2pRating            Float    @default(0)
+  p2pTrades            Int      @default(0)
+  notificationsEnabled Boolean  @default(true)
+  profilePicUrl        String?
+  avatarInitial        String
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  cryptoAssets  CryptoAsset[]
+  fiatAssets    FiatAsset[]
+  transactions  Transaction[]
+  p2pOffers     P2POffer[]
+  refreshTokens RefreshToken[]
+
+  @@map("users")
+}
+
+// One row per issued refresh token. Storing a hash (never the raw token)
+// lets us revoke individual sessions and rotate on every /auth/refresh
+// call: each refresh revokes the token it consumed and issues a new one,
+// so a stolen-then-replayed token is detectable (see AuthService.refresh).
+model RefreshToken {
+  id        String    @id // the token's `jti` claim, so a refresh can look this row up directly
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// One row per (user, crypto symbol) — together these compose
+// WalletData.crypto in the frontend shape.
+model CryptoAsset {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  symbol        String
+  name          String
+  balance       Decimal  @default(0) @db.Decimal(36, 18)
+  price         Decimal  @default(0) @db.Decimal(20, 8)
+  changePercent Float    @default(0)
+  logoChar      String
+  colorClass    String
+  updatedAt     DateTime @updatedAt
+
+  @@unique([userId, symbol])
+  @@map("crypto_assets")
+}
+
+// One row per (user, fiat currency) — composes WalletData.fiat.
+model FiatAsset {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currencyCode String
+  symbol       String
+  balance      Decimal  @default(0) @db.Decimal(20, 2)
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, currencyCode])
+  @@map("fiat_assets")
+}
+
+// Maps to Transaction in types.ts.
+model Transaction {
+  id           String            @id @default(cuid())
+  userId       String
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type         TransactionType
+  cryptoSymbol String
+  cryptoAmount Decimal           @db.Decimal(36, 18)
+  fiatAmount   Decimal?          @db.Decimal(20, 2)
+  fiatCurrency String?
+  status       TransactionStatus @default(PENDING)
+  addressTo    String?
+  addressFrom  String?
+  description  String?
+  billerName   String?
+  billDetails  Json?
+  createdAt    DateTime          @default(now())
+
+  @@index([userId, createdAt])
+  @@map("transactions")
+}
+
+// Maps to P2POffer in types.ts. Trader display fields (traderName,
+// traderAvatarInitial, traderRating, traderTrades) live on User and are
+// joined in; ranged display strings (availableAmountCrypto, limitFiat) are
+// stored as min/max numerics and formatted back in the P2P service.
+model P2POffer {
+  id                    String       @id @default(cuid())
+  traderId              String
+  trader                User         @relation(fields: [traderId], references: [id], onDelete: Cascade)
+  type                  P2PTradeType
+  cryptoSymbol          String
+  fiatCurrency          String
+  pricePerCoin          Decimal      @db.Decimal(24, 2)
+  availableAmountMin    Decimal      @db.Decimal(36, 18)
+  availableAmountMax    Decimal      @db.Decimal(36, 18)
+  limitFiatMin          Decimal      @db.Decimal(20, 2)
+  limitFiatMax          Decimal      @db.Decimal(20, 2)
+  paymentMethods        String[]
+  isOnline              Boolean      @default(true)
+  paymentWindowMinutes  Int          @default(15)
+  avgReleaseTimeMinutes Int          @default(5)
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  @@index([cryptoSymbol, fiatCurrency, type])
+  @@map("p2p_offers")
+}
+
+// Maps to BillCategory in types.ts.
+model BillCategory {
+  id        String   @id
+  name      String
+  iconName  String
+  countries String[]
+  billers   Biller[]
+
+  @@map("bill_categories")
+}
+
+// Maps to Biller in types.ts. `fields` stores the BillerField[] shape
+// (id/label/type/placeholder/options/validationRegex/required) as-is.
+model Biller {
+  id                  String       @id
+  name                String
+  categoryId          String
+  category            BillCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  country             String
+  logoUrl             String?
+  fields              Json
+  fixedAmount         Decimal?     @db.Decimal(20, 2)
+  minAmount           Decimal?     @db.Decimal(20, 2)
+  maxAmount           Decimal?     @db.Decimal(20, 2)
+  paymentAssetSymbols String[]
+
+  @@index([country, categoryId])
+  @@map("billers")
+}

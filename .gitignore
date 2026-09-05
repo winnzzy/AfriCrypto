@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# Environment / secrets — explicit on top of *.local as defense-in-depth;
+# backend/ also has its own .gitignore covering backend/.env directly.
+.env
+.env.local
+.env.*.local
+backend/.env
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

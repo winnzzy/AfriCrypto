@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: africrypto_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: africrypto
+      POSTGRES_PASSWORD: africrypto
+      POSTGRES_DB: africrypto
+    ports:
+      # Host port 5433 avoids clashing with any other local Postgres
+      # instance already bound to 5432.
+      - '5433:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U africrypto -d africrypto']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

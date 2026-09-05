@@ -1,10 +1,9 @@
 
-import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
-import { 
-  WalletData, 
-  Transaction, 
-  P2POffer, 
-  UserProfile, 
+import {
+  WalletData,
+  Transaction,
+  P2POffer,
+  UserProfile,
   MarketTrendAnalysis,
   SendCryptoPayload,
   ReceiveAddress,
@@ -17,11 +16,10 @@ import {
   Biller,
   BillPaymentPayload
 } from '../types';
-import { 
-    DEFAULT_USER_ID, 
-    GEMINI_TEXT_MODEL, 
-    AFRICAN_COUNTRIES_DATA, 
-    INITIAL_CRYPTO_ASSETS, 
+import {
+    DEFAULT_USER_ID,
+    AFRICAN_COUNTRIES_DATA,
+    INITIAL_CRYPTO_ASSETS,
     INITIAL_FIAT_ASSETS,
     MOCK_BILL_CATEGORIES,
     MOCK_BILLERS,
@@ -31,13 +29,128 @@ import {
 
 const MOCK_API_DELAY = 500; // milliseconds
 
-// Ensure API_KEY is handled correctly
-let apiKey = process.env.API_KEY;
-if (!apiKey) {
-  console.warn("API_KEY for Gemini is not set. Market analysis feature will be disabled.");
-}
-const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
+// --- Real backend wiring ---
+// Base URL of the NestJS backend (see /backend). Set via API_BASE_URL in
+// .env.local; vite.config.ts exposes it as process.env.API_BASE_URL the same
+// way GEMINI_API_KEY is exposed below.
+const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000/api';
 
+const ACCESS_TOKEN_KEY = 'africrypto.accessToken';
+const REFRESH_TOKEN_KEY = 'africrypto.refreshToken';
+
+interface AuthTokens {
+  accessToken: string;
+  refreshToken: string;
+}
+
+interface AuthResponse extends AuthTokens {
+  profile: UserProfile;
+}
+
+const getAccessToken = (): string | null => {
+  try { return localStorage.getItem(ACCESS_TOKEN_KEY); } catch { return null; }
+};
+const getRefreshToken = (): string | null => {
+  try { return localStorage.getItem(REFRESH_TOKEN_KEY); } catch { return null; }
+};
+const setTokens = (accessToken: string, refreshToken: string): void => {
+  try {
+    localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
+    localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+  } catch { /* localStorage unavailable — session just won't persist across reloads */ }
+};
+const clearTokens = (): void => {
+  try {
+    localStorage.removeItem(ACCESS_TOKEN_KEY);
+    localStorage.removeItem(REFRESH_TOKEN_KEY);
+  } catch { /* no-op */ }
+};
+
+// Dispatched when a refresh attempt fails so App.tsx can drop back to the
+// login screen from anywhere in the app, not just the call site that hit it.
+export const AUTH_EXPIRED_EVENT = 'africrypto:auth-expired';
+
+// Refresh tokens rotate server-side on every use (see backend AuthService) —
+// if two requests raced to refresh with the same token, the second would
+// look like a reuse of an already-consumed token and the backend would
+// revoke the whole session. De-duping concurrent refreshes avoids that.
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function refreshAccessToken(): Promise<boolean> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    const refreshToken = getRefreshToken();
+    if (!refreshToken) return false;
+    try {
+      const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+      });
+      if (!res.ok) return false;
+      const data: AuthTokens = await res.json();
+      setTokens(data.accessToken, data.refreshToken);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  try {
+    return await refreshInFlight;
+  } finally {
+    refreshInFlight = null;
+  }
+}
+
+async function extractErrorMessage(res: Response): Promise<string> {
+  try {
+    const body = await res.json();
+    if (Array.isArray(body?.message)) return body.message.join(', ');
+    if (typeof body?.message === 'string') return body.message;
+  } catch { /* non-JSON error body */ }
+  return `Request failed with status ${res.status}`;
+}
+
+// Thin fetch wrapper: attaches the access token, retries once through a
+// token refresh on 401, and normalizes error responses into thrown Errors
+// (so existing component code doing `catch (err: any) { err.message }`
+// keeps working unchanged).
+async function apiFetch<T>(path: string, options: RequestInit = {}, allowRefresh = true): Promise<T> {
+  const token = getAccessToken();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options.headers as Record<string, string> | undefined),
+  };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+
+  if (res.status === 401 && allowRefresh && !path.startsWith('/auth/') && getRefreshToken()) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) return apiFetch<T>(path, options, false);
+    clearTokens();
+    window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+    throw new Error('Your session has expired. Please log in again.');
+  }
+
+  if (!res.ok) {
+    throw new Error(await extractErrorMessage(res));
+  }
+
+  if (res.status === 204) return undefined as unknown as T;
+  return (await res.json()) as T;
+}
+
+// The backend's Prisma enums are UPPER_CASE (e.g. "SEND", "COMPLETED") while
+// types.ts's TransactionType/TransactionStatus are lower_case string enums —
+// every member matches case-insensitively, so a lowercase pass is enough.
+function normalizeTransaction(raw: any): Transaction {
+  return {
+    ...raw,
+    type: String(raw.type).toLowerCase() as TransactionType,
+    status: String(raw.status).toLowerCase() as TransactionStatus,
+  };
+}
 
 // Mock Data (in-memory store for wallet balances for demonstration)
 let currentWalletData: WalletData | null = null;
@@ -158,17 +271,71 @@ let mockUserProfile: UserProfile = { // Made mutable for updates
 
 // API Service Functions
 export const apiService = {
-  fetchWalletData: async (userId: string, userCountry: string): Promise<WalletData> => {
-    console.log(`Fetching wallet data for user ${userId} in ${userCountry}`);
-    return new Promise(resolve => setTimeout(() => {
-        const data = getInMemoryWalletData(userCountry);
-        resolve(JSON.parse(JSON.stringify(data))); // Return copy
-    }, MOCK_API_DELAY));
+  // --- Auth ---
+  // signup/login store the returned token pair and hand back the profile —
+  // callers don't touch tokens directly, they just get a UserProfile back
+  // like any other profile-fetching call.
+  signup: async (email: string, password: string, country: string): Promise<UserProfile> => {
+    const data = await apiFetch<AuthResponse>('/auth/signup', {
+      method: 'POST',
+      body: JSON.stringify({ email, password, country }),
+    });
+    setTokens(data.accessToken, data.refreshToken);
+    return data.profile;
   },
 
-  fetchTransactionHistory: async (userId: string): Promise<Transaction[]> => {
-    console.log(`Fetching transaction history for user ${userId}`);
-    return new Promise(resolve => setTimeout(() => resolve([...mockTransactions]), MOCK_API_DELAY));
+  login: async (email: string, password: string): Promise<UserProfile> => {
+    const data = await apiFetch<AuthResponse>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    });
+    setTokens(data.accessToken, data.refreshToken);
+    return data.profile;
+  },
+
+  logout: (): void => {
+    clearTokens();
+  },
+
+  // Synchronous best-effort check (a stored refresh token that has since
+  // expired still passes this) — used only to decide whether it's worth
+  // attempting restoreSession() on boot instead of showing the login screen
+  // immediately.
+  hasStoredSession: (): boolean => !!getRefreshToken(),
+
+  // Called once on app boot. Exchanges the stored refresh token for a fresh
+  // access token and fetches the profile, or returns null (and clears
+  // whatever was stored) if the session can no longer be revived.
+  restoreSession: async (): Promise<UserProfile | null> => {
+    if (!getRefreshToken()) return null;
+    const refreshed = await refreshAccessToken();
+    if (!refreshed) {
+      clearTokens();
+      return null;
+    }
+    try {
+      return await apiFetch<UserProfile>('/users/me');
+    } catch {
+      clearTokens();
+      return null;
+    }
+  },
+
+  // userId is no longer needed here — the backend identifies the caller from
+  // the access token — but the parameter stays so App.tsx and friends don't
+  // need to change.
+  fetchWalletData: async (_userId: string, _userCountry: string): Promise<WalletData> => {
+    return apiFetch<WalletData>('/wallets');
+  },
+
+  // Fetches the most recent page of history. The backend paginates
+  // (?page=/?limit=, default 20/page) and returns pagination metadata on
+  // response headers — not consumed here yet since this function's return
+  // type is still a plain Transaction[] for drop-in compatibility. A larger
+  // limit is requested so this still reads as "full history" for now.
+  fetchTransactionHistory: async (_userId: string): Promise<Transaction[]> => {
+    const transactions = await apiFetch<any[]>('/transactions?limit=100');
+    return transactions.map(normalizeTransaction);
   },
 
   fetchP2POffers: async (cryptoSymbol: string, fiatCurrency: string, tradeType: P2PTradeType, userCountry: string): Promise<P2POffer[]> => {
@@ -179,93 +346,52 @@ export const apiService = {
     return new Promise(resolve => setTimeout(() => resolve(generateMockP2POffers(countryName, cryptoSymbol, tradeType)), MOCK_API_DELAY));
   },
 
-  fetchUserProfile: async (userId: string): Promise<UserProfile> => {
-    console.log(`Fetching profile for user ${userId}`);
-    // Update avatarInitial if username changes and it's not set explicitly
-    if (mockUserProfile.username === 'Nnamuah Winner' && mockUserProfile.avatarInitial !== 'N') {
-        mockUserProfile.avatarInitial = 'N';
-    } else if (mockUserProfile.username !== 'Nnamuah Winner' && mockUserProfile.avatarInitial === 'V') { // Revert if username is not ValiantUser
-         mockUserProfile.avatarInitial = mockUserProfile.username.charAt(0).toUpperCase();
-    }
-
-    return new Promise(resolve => setTimeout(() => resolve({...mockUserProfile}), MOCK_API_DELAY));
-  },
-  
-  updateUserProfile: async (userId: string, data: Partial<UserProfile>): Promise<UserProfile> => {
-    console.log(`Updating profile for user ${userId} with data:`, data);
-    
-    // If username is part of the update, also update avatarInitial
-    if (data.username) {
-        data.avatarInitial = data.username.charAt(0).toUpperCase();
-    }
-
-    mockUserProfile = { ...mockUserProfile, ...data };
-    // If country changed, reset wallet data to reflect new country's fiat (or lack thereof initially)
-    if (data.country) {
-      currentWalletData = generateMockWalletData(data.country);
-    }
-    return new Promise(resolve => setTimeout(() => resolve({...mockUserProfile}), MOCK_API_DELAY));
+  fetchUserProfile: async (_userId: string): Promise<UserProfile> => {
+    return apiFetch<UserProfile>('/users/me');
   },
 
+  // The backend recomputes avatarInitial itself when username changes, and
+  // rejects any field outside its update DTO (username/country/
+  // notificationsEnabled/profilePicUrl) — so only those are forwarded, even
+  // though callers may pass a wider Partial<UserProfile>.
+  updateUserProfile: async (_userId: string, data: Partial<UserProfile>): Promise<UserProfile> => {
+    const { username, country, notificationsEnabled, profilePicUrl } = data;
+    const payload: Partial<UserProfile> = {};
+    if (username !== undefined) payload.username = username;
+    if (country !== undefined) payload.country = country;
+    if (notificationsEnabled !== undefined) payload.notificationsEnabled = notificationsEnabled;
+    if (profilePicUrl !== undefined) payload.profilePicUrl = profilePicUrl;
+
+    return apiFetch<UserProfile>('/users/me', {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  // Proxied through the backend (GET /market/trend/:cryptoSymbol) so the
+  // Gemini API key never reaches the browser — it used to be called
+  // directly from here with the key injected into the client bundle via
+  // vite.config.ts's `define`, which shipped the key to anyone who opened
+  // devtools. The backend returns 503 if it has no key configured.
   getMarketTrendExplanation: async (cryptoSymbol: string): Promise<MarketTrendAnalysis> => {
-    if (!ai) {
-      return Promise.reject(new Error("Gemini API client not initialized. API_KEY might be missing."));
-    }
-    console.log(`Fetching market trend explanation for ${cryptoSymbol} using Gemini`);
-    const prompt = `Explain the recent (last 7 days) market trends and key news for ${cryptoSymbol} in a concise paragraph (around 50-70 words) suitable for a mobile crypto app user. Focus on factual price movements and significant events if any. Avoid financial advice.`;
-    
-    try {
-      const response: GenerateContentResponse = await ai.models.generateContent({
-        model: GEMINI_TEXT_MODEL,
-        contents: prompt,
-        config: { temperature: 0.5 } 
-      });
-      const explanationText = response.text;
-      return {
-        cryptoSymbol,
-        explanation: explanationText,
-        generatedAt: new Date().toISOString(),
-      };
-    } catch (error) {
-      console.error("Error fetching market trend explanation from Gemini:", error);
-      throw error; 
-    }
+    return apiFetch<MarketTrendAnalysis>(`/market/trend/${encodeURIComponent(cryptoSymbol)}`);
   },
 
+  // The backend performs the balance check, decrement, and PENDING ->
+  // COMPLETED transition atomically server-side and returns the finished
+  // transaction directly — no client-side polling needed. userId is dropped
+  // from the payload since the backend identifies the sender from the token.
   sendCrypto: async (payload: SendCryptoPayload): Promise<Transaction> => {
-    console.log("Simulating sending crypto:", payload);
-    const wallet = getInMemoryWalletData(mockUserProfile.country);
-    const asset = wallet.crypto[payload.cryptoSymbol];
-
-    if (!asset || parseFloat(asset.balance.replace(/,/g, '')) < parseFloat(payload.amount)) {
-        throw new Error("Insufficient balance.");
-    }
-    
-    asset.balance = (parseFloat(asset.balance.replace(/,/g, '')) - parseFloat(payload.amount)).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 8});
-    asset.usdValue = parseFloat(asset.balance.replace(/,/g, '')) * asset.price;
-    
-    // Recalculate total USD balance
-    wallet.totalBalanceUSD = Object.values(wallet.crypto).reduce((sum, current) => sum + current.usdValue, 0);
-    updateInMemoryWalletData(wallet);
-
-
-    const newTransaction: Transaction = {
-      id: `tx${Date.now()}`,
-      type: TransactionType.SEND,
-      cryptoSymbol: payload.cryptoSymbol,
-      cryptoAmount: payload.amount,
-      status: TransactionStatus.PENDING,
-      timestamp: new Date().toISOString(),
-      addressTo: payload.recipientAddress,
-      description: `Sent ${payload.cryptoSymbol} to ${payload.recipientAddress.substring(0,10)}...`
-    };
-    mockTransactions.unshift(newTransaction); 
-    return new Promise(resolve => setTimeout(() => {
-      const completedTx = { ...newTransaction, status: TransactionStatus.COMPLETED };
-      const txIndex = mockTransactions.findIndex(tx => tx.id === completedTx.id);
-      if (txIndex !== -1) mockTransactions[txIndex] = completedTx;
-      resolve(completedTx);
-    }, MOCK_API_DELAY + 1000));
+    const transaction = await apiFetch<any>('/wallets/send', {
+      method: 'POST',
+      body: JSON.stringify({
+        cryptoSymbol: payload.cryptoSymbol,
+        recipientAddress: payload.recipientAddress,
+        amount: payload.amount,
+        memo: payload.memo,
+      }),
+    });
+    return normalizeTransaction(transaction);
   },
 
   getReceiveAddress: async (userId: string, cryptoSymbol: string): Promise<ReceiveAddress> => {

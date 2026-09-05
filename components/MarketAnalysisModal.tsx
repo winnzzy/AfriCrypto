@@ -24,8 +24,8 @@ const MarketAnalysisModal: React.FC<MarketAnalysisModalProps> = ({ cryptoSymbol,
       setAnalysis(result);
     } catch (err: any) {
       console.error("MarketAnalysisModal Error:", err);
-      if (err.message && err.message.includes("API_KEY")) {
-        setError("Market analysis feature is currently unavailable. API key might be missing or invalid.");
+      if (err.message && err.message.includes("not configured")) {
+        setError("Market analysis feature is currently unavailable on this server.");
       } else if (err.message && err.message.includes("429")) { // Too Many Requests
         setError("Market analysis service is temporarily busy. Please try again later.");
       }

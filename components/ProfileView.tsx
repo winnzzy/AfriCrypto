@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { UserProfile, AfricanCountriesData, AfricanCountryInfo } from '../types';
-import { User as UserIcon, MapPin, Shield, Bell, Settings, ArrowRight, Star } from 'lucide-react';
+import { User as UserIcon, MapPin, Shield, Bell, Settings, ArrowRight, Star, LogOut } from 'lucide-react';
 import LoadingSpinner from './LoadingSpinner';
 
 interface ProfileViewProps {
@@ -9,9 +9,10 @@ interface ProfileViewProps {
   africanCountries: AfricanCountriesData;
   onUpdateCountry: (country: string) => void;
   onToggleNotifications: (enabled: boolean) => void;
+  onLogout: () => void;
 }
 
-const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, africanCountries, onUpdateCountry, onToggleNotifications }) => {
+const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, africanCountries, onUpdateCountry, onToggleNotifications, onLogout }) => {
   if (!userProfile) {
     return <LoadingSpinner text="Loading profile..." />;
   }
@@ -89,6 +90,16 @@ const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, africanCountries
               <span className="text-white text-sm">More Settings</span>
             </div>
             <ArrowRight className="w-5 h-5 text-gray-500" />
+          </button>
+
+          <button
+            onClick={onLogout}
+            className="w-full flex items-center justify-between p-3 bg-red-500/10 hover:bg-red-500/20 rounded-lg transition-colors"
+          >
+            <div className="flex items-center space-x-3">
+              <LogOut className="w-5 h-5 text-red-400" />
+              <span className="text-red-400 text-sm">Log out</span>
+            </div>
           </button>
         </div>
       </div>
