@@ -5,7 +5,6 @@ import { QueryOffersDto } from './dto/query-offers.dto';
 import { CreateOfferDto } from './dto/create-offer.dto';
 import { InitiateTradeDto } from './dto/initiate-trade.dto';
 
-// Protected by the global JwtAuthGuard (see AppModule) — no per-route guard needed.
 @Controller('p2p')
 export class P2pController {
   constructor(private readonly p2pService: P2pService) {}
@@ -18,6 +17,11 @@ export class P2pController {
   @Post('offers')
   createOffer(@CurrentUser('userId') userId: string, @Body() dto: CreateOfferDto) {
     return this.p2pService.createOffer(userId, dto);
+  }
+
+  @Get('trades')
+  getMyTrades(@CurrentUser('userId') userId: string) {
+    return this.p2pService.getMyTrades(userId);
   }
 
   @Post('trade')
