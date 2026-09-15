@@ -1,10 +1,4 @@
 // Prisma schema for AfriCrypto.
-// Field shapes are modeled on the frontend's /types.ts interfaces (WalletData,
-// Transaction, P2POffer, UserProfile, Biller, ...) so persisted data maps
-// cleanly onto what the UI already expects. Formatted display strings from
-// the mock layer (e.g. "0.01 - 0.5 BTC") are stored as separate numeric
-// fields here and composed back into that shape in the service layer.
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -35,8 +29,15 @@ enum P2PTradeType {
   SELL
 }
 
-// Maps to UserProfile in types.ts, plus auth fields (email/passwordHash)
-// that the mock layer never needed because it had no real accounts.
+enum P2PTradeStatus {
+  AWAITING_PAYMENT
+  PAYMENT_MARKED
+  COMPLETED
+  CANCELLED
+  EXPIRED
+  DISPUTED
+}
+
 model User {
   id                   String   @id @default(cuid())
   email                String   @unique
@@ -52,21 +53,19 @@ model User {
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
-  cryptoAssets  CryptoAsset[]
-  fiatAssets    FiatAsset[]
-  transactions  Transaction[]
-  p2pOffers     P2POffer[]
-  refreshTokens RefreshToken[]
+  cryptoAssets    CryptoAsset[]
+  fiatAssets      FiatAsset[]
+  transactions    Transaction[]
+  p2pOffers       P2POffer[]
+  p2pTradesAsMaker P2PTrade[] @relation("P2PMaker")
+  p2pTradesAsTaker P2PTrade[] @relation("P2PTaker")
+  refreshTokens   RefreshToken[]
 
   @@map("users")
 }
 
-// One row per issued refresh token. Storing a hash (never the raw token)
-// lets us revoke individual sessions and rotate on every /auth/refresh
-// call: each refresh revokes the token it consumed and issues a new one,
-// so a stolen-then-replayed token is detectable (see AuthService.refresh).
 model RefreshToken {
-  id        String    @id // the token's `jti` claim, so a refresh can look this row up directly
+  id        String    @id
   userId    String
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   tokenHash String
@@ -78,8 +77,6 @@ model RefreshToken {
   @@map("refresh_tokens")
 }
 
-// One row per (user, crypto symbol) — together these compose
-// WalletData.crypto in the frontend shape.
 model CryptoAsset {
   id            String   @id @default(cuid())
   userId        String
@@ -97,7 +94,6 @@ model CryptoAsset {
   @@map("crypto_assets")
 }
 
-// One row per (user, fiat currency) — composes WalletData.fiat.
 model FiatAsset {
   id           String   @id @default(cuid())
   userId       String
@@ -111,7 +107,6 @@ model FiatAsset {
   @@map("fiat_assets")
 }
 
-// Maps to Transaction in types.ts.
 model Transaction {
   id           String            @id @default(cuid())
   userId       String
@@ -133,10 +128,6 @@ model Transaction {
   @@map("transactions")
 }
 
-// Maps to P2POffer in types.ts. Trader display fields (traderName,
-// traderAvatarInitial, traderRating, traderTrades) live on User and are
-// joined in; ranged display strings (availableAmountCrypto, limitFiat) are
-// stored as min/max numerics and formatted back in the P2P service.
 model P2POffer {
   id                    String       @id @default(cuid())
   traderId              String
@@ -155,12 +146,42 @@ model P2POffer {
   avgReleaseTimeMinutes Int          @default(5)
   createdAt             DateTime     @default(now())
   updatedAt             DateTime     @updatedAt
+  trades                P2PTrade[]
 
   @@index([cryptoSymbol, fiatCurrency, type])
   @@map("p2p_offers")
 }
 
-// Maps to BillCategory in types.ts.
+model P2PTrade {
+  id             String         @id @default(cuid())
+  offerId        String
+  offer          P2POffer       @relation(fields: [offerId], references: [id], onDelete: Restrict)
+  makerId        String
+  maker          User           @relation("P2PMaker", fields: [makerId], references: [id], onDelete: Restrict)
+  takerId        String
+  taker          User           @relation("P2PTaker", fields: [takerId], references: [id], onDelete: Restrict)
+  type           P2PTradeType
+  cryptoSymbol   String
+  fiatCurrency   String
+  pricePerCoin   Decimal        @db.Decimal(24, 2)
+  cryptoAmount   Decimal        @db.Decimal(36, 18)
+  fiatAmount     Decimal        @db.Decimal(20, 2)
+  paymentMethods String[]
+  status         P2PTradeStatus @default(AWAITING_PAYMENT)
+  expiresAt      DateTime
+  paymentMarkedAt DateTime?
+  completedAt    DateTime?
+  cancelledAt    DateTime?
+  disputedAt     DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([makerId, status])
+  @@index([takerId, status])
+  @@index([offerId, createdAt])
+  @@map("p2p_trades")
+}
+
 model BillCategory {
   id        String   @id
   name      String
@@ -171,19 +192,17 @@ model BillCategory {
   @@map("bill_categories")
 }
 
-// Maps to Biller in types.ts. `fields` stores the BillerField[] shape
-// (id/label/type/placeholder/options/validationRegex/required) as-is.
 model Biller {
-  id                  String       @id
+  id                  String        @id
   name                String
   categoryId          String
   category            BillCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   country             String
   logoUrl             String?
   fields              Json
-  fixedAmount         Decimal?     @db.Decimal(20, 2)
-  minAmount           Decimal?     @db.Decimal(20, 2)
-  maxAmount           Decimal?     @db.Decimal(20, 2)
+  fixedAmount         Decimal?      @db.Decimal(20, 2)
+  minAmount           Decimal?      @db.Decimal(20, 2)
+  maxAmount           Decimal?      @db.Decimal(20, 2)
   paymentAssetSymbols String[]
 
   @@index([country, categoryId])
