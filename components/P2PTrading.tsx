@@ -157,18 +157,15 @@ const P2PTrading: React.FC<P2PTradingProps> = ({ userCountryInfo, trades, onTrad
                 <div>
                   <p className="text-white text-sm font-medium">{trade.cryptoAmount} {trade.cryptoSymbol}</p>
                   <p className="text-gray-400 text-xs">{trade.fiatAmount} {trade.fiatCurrency}</p>
+                  <p className="text-gray-500 text-xs mt-1">You are the {trade.role.toLowerCase()}</p>
                 </div>
                 <span className="text-xs text-blue-300">{trade.status.replaceAll('_', ' ').toUpperCase()}</span>
               </div>
               <div className="flex flex-wrap gap-2 mt-3">
-                {trade.status === P2PTradeStatus.AWAITING_PAYMENT && <>
-                  <button disabled={tradeActionId===trade.id} onClick={() => runTradeAction(trade,'payment')} className="px-3 py-1.5 bg-blue-600 rounded text-xs text-white">I have paid</button>
-                  <button disabled={tradeActionId===trade.id} onClick={() => runTradeAction(trade,'cancel')} className="px-3 py-1.5 bg-slate-600 rounded text-xs text-white">Cancel</button>
-                </>}
-                {trade.status === P2PTradeStatus.PAYMENT_MARKED && <>
-                  <button disabled={tradeActionId===trade.id} onClick={() => runTradeAction(trade,'release')} className="px-3 py-1.5 bg-green-600 rounded text-xs text-white">Release crypto</button>
-                  <button disabled={tradeActionId===trade.id} onClick={() => runTradeAction(trade,'dispute')} className="px-3 py-1.5 bg-amber-600 rounded text-xs text-white">Open dispute</button>
-                </>}
+                {trade.canMarkPayment && <button disabled={tradeActionId===trade.id} onClick={() => runTradeAction(trade,'payment')} className="px-3 py-1.5 bg-blue-600 rounded text-xs text-white">I have paid</button>}
+                {trade.canCancel && <button disabled={tradeActionId===trade.id} onClick={() => runTradeAction(trade,'cancel')} className="px-3 py-1.5 bg-slate-600 rounded text-xs text-white">Cancel</button>}
+                {trade.canRelease && <button disabled={tradeActionId===trade.id} onClick={() => runTradeAction(trade,'release')} className="px-3 py-1.5 bg-green-600 rounded text-xs text-white">Release crypto</button>}
+                {trade.canDispute && <button disabled={tradeActionId===trade.id} onClick={() => runTradeAction(trade,'dispute')} className="px-3 py-1.5 bg-amber-600 rounded text-xs text-white">Open dispute</button>}
               </div>
             </div>
           ))}
