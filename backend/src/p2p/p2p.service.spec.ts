@@ -9,7 +9,7 @@ function offer(type = P2PTradeType.SELL) {
     id: 'offer-1', traderId: 'maker', type, cryptoSymbol: 'USDT', fiatCurrency: 'NGN',
     pricePerCoin: d('1500'), availableAmountMin: d('10'), availableAmountMax: d('100'),
     limitFiatMin: d('15000'), limitFiatMax: d('150000'), paymentMethods: ['Bank'],
-    isOnline: true, paymentWindowMinutes: 15,
+    isOnline: true, remainingAmount: d('100'), paymentWindowMinutes: 15,
   };
 }
 
@@ -27,11 +27,12 @@ describe('P2pService escrow lifecycle', () => {
 
   beforeEach(() => {
     prisma = {
-      p2POffer: { findUnique: jest.fn() },
+      p2POffer: { findUnique: jest.fn(), findMany: jest.fn(), updateMany: jest.fn(), update: jest.fn() },
       p2PTrade: { create: jest.fn(), findUnique: jest.fn(), updateMany: jest.fn(), findMany: jest.fn() },
       cryptoAsset: { updateMany: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
       transaction: { create: jest.fn() },
-      user: { update: jest.fn() },
+      user: { update: jest.fn(), findUnique: jest.fn() },
+      p2PDisputeResolution: { create: jest.fn() },
     };
     prisma.$transaction = jest.fn(async (cb: any) => cb(prisma));
     service = new P2pService(prisma);
@@ -39,6 +40,7 @@ describe('P2pService escrow lifecycle', () => {
 
   it('reserves maker crypto for a SELL offer', async () => {
     prisma.p2POffer.findUnique.mockResolvedValue(offer(P2PTradeType.SELL));
+    prisma.p2POffer.updateMany.mockResolvedValue({ count: 1 });
     prisma.cryptoAsset.updateMany.mockResolvedValue({ count: 1 });
     prisma.p2PTrade.create.mockImplementation(({ data }: any) => data);
     await service.initiateTrade('taker', { offerId: 'offer-1', amount: '20' });
@@ -50,6 +52,7 @@ describe('P2pService escrow lifecycle', () => {
 
   it('reserves taker crypto for a BUY offer', async () => {
     prisma.p2POffer.findUnique.mockResolvedValue(offer(P2PTradeType.BUY));
+    prisma.p2POffer.updateMany.mockResolvedValue({ count: 1 });
     prisma.cryptoAsset.updateMany.mockResolvedValue({ count: 1 });
     prisma.p2PTrade.create.mockImplementation(({ data }: any) => data);
     await service.initiateTrade('taker', { offerId: 'offer-1', amount: '20' });
@@ -60,6 +63,7 @@ describe('P2pService escrow lifecycle', () => {
 
   it('rejects escrow when seller balance is insufficient', async () => {
     prisma.p2POffer.findUnique.mockResolvedValue(offer());
+    prisma.p2POffer.updateMany.mockResolvedValue({ count: 1 });
     prisma.cryptoAsset.updateMany.mockResolvedValue({ count: 0 });
     await expect(service.initiateTrade('taker', { offerId: 'offer-1', amount: '20' }))
       .rejects.toBeInstanceOf(BadRequestException);
