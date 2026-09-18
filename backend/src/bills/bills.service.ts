@@ -4,10 +4,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TransactionsService, TransactionDto } from '../transactions/transactions.service';
 import { SUPPORTED_CRYPTO_SYMBOLS } from '../common/default-assets';
 import { PayBillDto } from './dto/pay-bill.dto';
+import { BillProvider } from './providers/bill-provider';
 
 @Injectable()
 export class BillsService {
-  constructor(private readonly prisma: PrismaService, private readonly transactionsService: TransactionsService) {}
+  constructor(private readonly prisma: PrismaService, private readonly transactionsService: TransactionsService, private readonly provider: BillProvider) {}
 
   findCategories(country:string){ return this.prisma.billCategory.findMany({where:{countries:{has:country}}}); }
   async findBillers(country:string,categoryId:string){ const rows=await this.prisma.biller.findMany({where:{country,categoryId}}); return rows.map(b=>({...b,fixedAmount:b.fixedAmount?Number(b.fixedAmount):undefined,minAmount:b.minAmount?Number(b.minAmount):undefined,maxAmount:b.maxAmount?Number(b.maxAmount):undefined})); }
@@ -39,7 +40,7 @@ export class BillsService {
     const amountFiat=this.billAmount(biller,dto.details);
     const isCrypto=SUPPORTED_CRYPTO_SYMBOLS.includes(dto.paymentAssetSymbol);
 
-    return this.prisma.$transaction(async tx=>{
+    const transaction=await this.prisma.$transaction(async tx=>{
       let paymentAmount=amountFiat, cryptoAmount=new Prisma.Decimal(0);
       if(isCrypto){
         const asset=await tx.cryptoAsset.findUnique({where:{userId_symbol:{userId,symbol:dto.paymentAssetSymbol}}}); if(!asset) throw new NotFoundException(`No ${dto.paymentAssetSymbol} balance for this user`);
@@ -53,8 +54,27 @@ export class BillsService {
       const record=await tx.billPayment.create({data:{userId,billerId:biller.id,idempotencyKey:dto.idempotencyKey,paymentAssetSymbol:dto.paymentAssetSymbol,amountFiat,fiatCurrency:dto.paymentAssetSymbol,paymentAmount,details:dto.details,status:TransactionStatus.PENDING}});
       const transaction=await this.transactionsService.create({userId,type:TransactionType.BILL_PAYMENT,cryptoSymbol:isCrypto?dto.paymentAssetSymbol:'',cryptoAmount,status:TransactionStatus.PENDING,fiatAmount:amountFiat,fiatCurrency:dto.paymentAssetSymbol,description:`Paid ${biller.name}`,billerName:biller.name,billDetails:dto.details},tx);
       await tx.billPayment.update({where:{id:record.id},data:{transactionId:transaction.id,status:TransactionStatus.PROCESSING,processingAt:new Date()}});
-      return transaction;
+      return {transaction,paymentId:record.id};
     });
+    try {
+      const submission=await this.provider.submit({paymentId:transaction.paymentId,billerId:biller.id,amountFiat:amountFiat.toString(),fiatCurrency:biller.country,details:dto.details});
+      await this.prisma.billPayment.update({where:{id:transaction.paymentId},data:{providerReference:submission.providerReference}});
+      if(submission.status==='COMPLETED') await this.completePayment(transaction.paymentId,submission.providerReference);
+      if(submission.status==='FAILED') await this.failAndReversePayment(transaction.paymentId,submission.failureReason||'Provider rejected payment');
+    } catch {
+      // Keep PROCESSING: reconciliation/webhook can safely resolve an uncertain provider response.
+    }
+    return this.transactionsService.findOne(userId,transaction.transaction.id);
+  }
+
+  async handleProviderWebhook(rawBody:Buffer,signature:string|undefined){
+    if(!this.provider.verifyWebhook(rawBody,signature)) throw new BadRequestException('Invalid provider webhook signature');
+    let event; try{ event=this.provider.parseWebhook(rawBody); }catch{ throw new BadRequestException('Invalid provider webhook payload'); }
+    const payment=await this.prisma.billPayment.findUnique({where:{id:event.paymentId}});
+    if(!payment) throw new NotFoundException('Bill payment not found');
+    if(payment.providerReference&&payment.providerReference!==event.providerReference) throw new BadRequestException('Provider reference mismatch');
+    if(event.status==='COMPLETED') return this.completePayment(event.paymentId,event.providerReference);
+    return this.failAndReversePayment(event.paymentId,event.failureReason||'Provider reported payment failure');
   }
 
   async getPayment(userId:string,id:string){
