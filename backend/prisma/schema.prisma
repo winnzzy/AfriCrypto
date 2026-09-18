@@ -173,6 +173,7 @@ model Biller {
   categoryId String
   category BillCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   country String
+  fiatCurrency String
   logoUrl String?
   fields Json
   fixedAmount Decimal? @db.Decimal(20, 2)
