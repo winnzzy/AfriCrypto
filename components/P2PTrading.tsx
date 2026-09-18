@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { P2POffer, P2PTradeType, AfricanCountryInfo } from '../types';
+import { P2POffer, P2PTrade, P2PTradeStatus, P2PTradeType, AfricanCountryInfo } from '../types';
 import { apiService } from '../services/apiService';
 import P2POfferItem from './P2POfferItem';
 import LoadingSpinner from './LoadingSpinner';
@@ -9,16 +9,19 @@ import { SUPPORTED_CRYPTO_SYMBOLS } from '../constants';
 
 interface P2PTradingProps {
   userCountryInfo: AfricanCountryInfo | undefined;
+  trades: P2PTrade[];
+  onTradesChange: (trades: P2PTrade[]) => void;
   onInitiateTrade: (offerId: string, cryptoSymbol: string, amount: string, tradeType: P2PTradeType) => void;
 }
 
-const P2PTrading: React.FC<P2PTradingProps> = ({ userCountryInfo, onInitiateTrade }) => {
+const P2PTrading: React.FC<P2PTradingProps> = ({ userCountryInfo, trades, onTradesChange, onInitiateTrade }) => {
   const [tradeType, setTradeType] = useState<P2PTradeType>(P2PTradeType.BUY);
   const [selectedCrypto, setSelectedCrypto] = useState<string>(SUPPORTED_CRYPTO_SYMBOLS[0]);
   const [amount, setAmount] = useState('');
   const [offers, setOffers] = useState<P2POffer[] | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [tradeActionId, setTradeActionId] = useState<string | null>(null);
 
   const fetchOffers = useCallback(async () => {
     if (!userCountryInfo) return;
@@ -39,6 +42,24 @@ const P2PTrading: React.FC<P2PTradingProps> = ({ userCountryInfo, onInitiateTrad
   useEffect(() => {
     fetchOffers();
   }, [fetchOffers]);
+
+  const updateTrade = (updated: P2PTrade) => onTradesChange(trades.map(t => t.id === updated.id ? updated : t));
+
+  const runTradeAction = async (trade: P2PTrade, action: 'payment' | 'release' | 'cancel' | 'dispute') => {
+    setTradeActionId(trade.id);
+    setError(null);
+    try {
+      const updated = action === 'payment' ? await apiService.markP2PPayment(trade.id)
+        : action === 'release' ? await apiService.releaseP2PCrypto(trade.id)
+        : action === 'cancel' ? await apiService.cancelP2PTrade(trade.id)
+        : await apiService.disputeP2PTrade(trade.id);
+      updateTrade(updated);
+    } catch (err: any) {
+      setError(err.message || 'Unable to update trade.');
+    } finally {
+      setTradeActionId(null);
+    }
+  };
 
   const handleTradeAction = (offerId: string, cryptoSymbol: string) => {
     // In a real app, you'd likely open a modal to confirm amount, etc.
@@ -125,6 +146,33 @@ const P2PTrading: React.FC<P2PTradingProps> = ({ userCountryInfo, onInitiateTrad
       
       {!isLoading && !error && offers && offers.length === 0 && (
         <p className="text-gray-400 text-center py-4">No offers found for your criteria.</p>
+      )}
+
+      {trades.length > 0 && (
+        <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700 space-y-3">
+          <h4 className="text-white font-semibold">My P2P Trades</h4>
+          {trades.slice(0, 5).map(trade => (
+            <div key={trade.id} className="border border-slate-700 rounded-lg p-3">
+              <div className="flex justify-between gap-3">
+                <div>
+                  <p className="text-white text-sm font-medium">{trade.cryptoAmount} {trade.cryptoSymbol}</p>
+                  <p className="text-gray-400 text-xs">{trade.fiatAmount} {trade.fiatCurrency}</p>
+                </div>
+                <span className="text-xs text-blue-300">{trade.status.replaceAll('_', ' ').toUpperCase()}</span>
+              </div>
+              <div className="flex flex-wrap gap-2 mt-3">
+                {trade.status === P2PTradeStatus.AWAITING_PAYMENT && <>
+                  <button disabled={tradeActionId===trade.id} onClick={() => runTradeAction(trade,'payment')} className="px-3 py-1.5 bg-blue-600 rounded text-xs text-white">I have paid</button>
+                  <button disabled={tradeActionId===trade.id} onClick={() => runTradeAction(trade,'cancel')} className="px-3 py-1.5 bg-slate-600 rounded text-xs text-white">Cancel</button>
+                </>}
+                {trade.status === P2PTradeStatus.PAYMENT_MARKED && <>
+                  <button disabled={tradeActionId===trade.id} onClick={() => runTradeAction(trade,'release')} className="px-3 py-1.5 bg-green-600 rounded text-xs text-white">Release crypto</button>
+                  <button disabled={tradeActionId===trade.id} onClick={() => runTradeAction(trade,'dispute')} className="px-3 py-1.5 bg-amber-600 rounded text-xs text-white">Open dispute</button>
+                </>}
+              </div>
+            </div>
+          ))}
+        </div>
       )}
 
       {!isLoading && !error && offers && offers.length > 0 && (
