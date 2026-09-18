@@ -30,6 +30,7 @@ model User {
   cryptoAssets CryptoAsset[]
   fiatAssets FiatAsset[]
   transactions Transaction[]
+  billPayments BillPayment[]
   p2pOffers P2POffer[]
   p2pTradesAsMaker P2PTrade[] @relation("P2PMaker")
   p2pTradesAsTaker P2PTrade[] @relation("P2PTaker")
@@ -175,4 +176,24 @@ model Biller {
   paymentAssetSymbols String[]
   @@index([country, categoryId])
   @@map("billers")
+}
+
+model BillPayment {
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  billerId String
+  idempotencyKey String
+  paymentAssetSymbol String
+  amountFiat Decimal @db.Decimal(20, 2)
+  fiatCurrency String
+  paymentAmount Decimal @db.Decimal(36, 18)
+  details Json
+  transactionId String? @unique
+  status TransactionStatus @default(PENDING)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
+  @@map("bill_payments")
 }
