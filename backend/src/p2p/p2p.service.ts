@@ -39,6 +39,33 @@ export class P2pService {
   async cancelTrade(userId:string,id:string){ const t=await this.participantTrade(userId,id); if(t.status!==P2PTradeStatus.AWAITING_PAYMENT) throw new BadRequestException('Only unpaid trades can be cancelled'); return this.prisma.$transaction(async tx=>{ const claimed=await tx.p2PTrade.updateMany({where:{id,status:P2PTradeStatus.AWAITING_PAYMENT,escrowReleasedAt:null},data:{status:P2PTradeStatus.CANCELLED,cancelledAt:new Date(),escrowReleasedAt:new Date()}}); if(claimed.count!==1) throw new BadRequestException('Trade state changed; refresh and try again'); await this.refundEscrow(tx,t); return this.tradeDto(userId,await tx.p2PTrade.findUnique({where:{id}})); }); }
   async disputeTrade(userId:string,id:string){ const t=await this.participantTrade(userId,id); if(t.status!==P2PTradeStatus.PAYMENT_MARKED) throw new BadRequestException('A dispute can only be opened after payment is marked'); const changed=await this.prisma.p2PTrade.updateMany({where:{id,status:P2PTradeStatus.PAYMENT_MARKED,escrowReleasedAt:null},data:{status:P2PTradeStatus.DISPUTED,disputedAt:new Date()}}); if(changed.count!==1) throw new BadRequestException('Trade state changed; refresh and try again'); return this.tradeDto(userId,await this.prisma.p2PTrade.findUnique({where:{id}})); }
 
+  async resolveDispute(adminId:string,id:string,outcome:'BUYER'|'SELLER',reason:string){
+    const admin=await this.prisma.user.findUnique({where:{id:adminId},select:{isAdmin:true}});
+    if(!admin?.isAdmin) throw new ForbiddenException('Administrator access required');
+    return this.prisma.$transaction(async tx=>{
+      const t=await tx.p2PTrade.findUnique({where:{id}});
+      if(!t) throw new NotFoundException('Trade not found');
+      if(t.status!==P2PTradeStatus.DISPUTED||t.escrowReleasedAt) throw new BadRequestException('Dispute has already been resolved or is not open');
+      const {sellerId,buyerId}=this.parties(t);
+      const status=outcome==='BUYER'?P2PTradeStatus.RESOLVED_BUYER:P2PTradeStatus.RESOLVED_SELLER;
+      const claimed=await tx.p2PTrade.updateMany({where:{id,status:P2PTradeStatus.DISPUTED,escrowReleasedAt:null},data:{status,escrowReleasedAt:new Date(),completedAt:outcome==='BUYER'?new Date():null}});
+      if(claimed.count!==1) throw new BadRequestException('Dispute state changed; refresh and try again');
+      if(outcome==='BUYER'){
+        const buyerAsset=await tx.cryptoAsset.findUnique({where:{userId_symbol:{userId:buyerId,symbol:t.cryptoSymbol}}});
+        if(!buyerAsset) throw new BadRequestException('Buyer wallet for this asset is unavailable');
+        await tx.cryptoAsset.update({where:{id:buyerAsset.id},data:{balance:{increment:t.cryptoAmount}}});
+        await tx.transaction.create({data:{userId:buyerId,type:TransactionType.P2P_BUY,cryptoSymbol:t.cryptoSymbol,cryptoAmount:t.cryptoAmount,fiatAmount:t.fiatAmount,fiatCurrency:t.fiatCurrency,status:TransactionStatus.COMPLETED,description:`P2P dispute awarded to buyer ${t.id}`}});
+        await tx.transaction.create({data:{userId:sellerId,type:TransactionType.P2P_SELL,cryptoSymbol:t.cryptoSymbol,cryptoAmount:t.cryptoAmount,fiatAmount:t.fiatAmount,fiatCurrency:t.fiatCurrency,status:TransactionStatus.COMPLETED,description:`P2P dispute awarded to buyer ${t.id}`}});
+        await tx.user.update({where:{id:buyerId},data:{p2pTrades:{increment:1}}});
+        await tx.user.update({where:{id:sellerId},data:{p2pTrades:{increment:1}}});
+      } else {
+        await this.refundEscrow(tx,t);
+      }
+      await tx.p2PDisputeResolution.create({data:{tradeId:id,resolvedById:adminId,outcome,reason}});
+      return tx.p2PTrade.findUnique({where:{id},include:{disputeResolution:true}});
+    });
+  }
+
   async releaseCrypto(userId:string,id:string){ const t=await this.participantTrade(userId,id),{sellerId,buyerId}=this.parties(t); if(sellerId!==userId) throw new ForbiddenException('Only the seller can release crypto'); if(t.status!==P2PTradeStatus.PAYMENT_MARKED) throw new BadRequestException('Crypto can only be released after payment is marked'); return this.prisma.$transaction(async tx=>{ const changed=await tx.p2PTrade.updateMany({where:{id,status:P2PTradeStatus.PAYMENT_MARKED,escrowReleasedAt:null},data:{status:P2PTradeStatus.COMPLETED,completedAt:new Date(),escrowReleasedAt:new Date()}}); if(changed.count!==1) throw new BadRequestException('Trade has already been settled or its state changed'); const buyerAsset=await tx.cryptoAsset.findUnique({where:{userId_symbol:{userId:buyerId,symbol:t.cryptoSymbol}}}); if(!buyerAsset) throw new BadRequestException('Buyer wallet for this asset is unavailable'); await tx.cryptoAsset.update({where:{id:buyerAsset.id},data:{balance:{increment:t.cryptoAmount}}}); await tx.transaction.create({data:{userId:buyerId,type:TransactionType.P2P_BUY,cryptoSymbol:t.cryptoSymbol,cryptoAmount:t.cryptoAmount,fiatAmount:t.fiatAmount,fiatCurrency:t.fiatCurrency,status:TransactionStatus.COMPLETED,description:`P2P purchase ${t.id}`}}); await tx.transaction.create({data:{userId:sellerId,type:TransactionType.P2P_SELL,cryptoSymbol:t.cryptoSymbol,cryptoAmount:t.cryptoAmount,fiatAmount:t.fiatAmount,fiatCurrency:t.fiatCurrency,status:TransactionStatus.COMPLETED,description:`P2P sale ${t.id}`}}); await tx.user.update({where:{id:buyerId},data:{p2pTrades:{increment:1}}}); await tx.user.update({where:{id:sellerId},data:{p2pTrades:{increment:1}}}); return this.tradeDto(userId,await tx.p2PTrade.findUnique({where:{id}})); }); }
 
   async getMyTrades(userId:string){ const expired=await this.prisma.p2PTrade.findMany({where:{status:P2PTradeStatus.AWAITING_PAYMENT,escrowReleasedAt:null,expiresAt:{lt:new Date()},OR:[{makerId:userId},{takerId:userId}]},select:{id:true}}); for(const t of expired) await this.expireTrade(t.id); return (await this.prisma.p2PTrade.findMany({where:{OR:[{makerId:userId},{takerId:userId}]},orderBy:{createdAt:'desc'}})).map(t=>this.tradeDto(userId,t)); }
