@@ -122,6 +122,7 @@ model P2POffer {
   updatedAt DateTime @updatedAt
   trades P2PTrade[]
   @@index([cryptoSymbol, fiatCurrency, type])
+  @@index([isOnline, remainingAmount])
   @@map("p2p_offers")
 }
 
