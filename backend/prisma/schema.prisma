@@ -11,7 +11,7 @@ datasource db {
 enum TransactionType { BUY SELL SEND RECEIVE P2P_BUY P2P_SELL BILL_PAYMENT }
 enum TransactionStatus { PENDING PROCESSING COMPLETED FAILED REVERSED }
 enum P2PTradeType { BUY SELL }
-enum P2PTradeStatus { AWAITING_PAYMENT PAYMENT_MARKED COMPLETED CANCELLED EXPIRED DISPUTED }
+enum P2PTradeStatus { AWAITING_PAYMENT PAYMENT_MARKED COMPLETED CANCELLED EXPIRED DISPUTED RESOLVED_BUYER RESOLVED_SELLER }
 
 model User {
   id String @id @default(cuid())
@@ -36,6 +36,7 @@ model User {
   p2pTradesAsMaker P2PTrade[] @relation("P2PMaker")
   p2pTradesAsTaker P2PTrade[] @relation("P2PTaker")
   refreshTokens RefreshToken[]
+  p2pDisputeResolutions P2PDisputeResolution[] @relation("P2PResolver")
   @@map("users")
 }
 
@@ -146,6 +147,7 @@ model P2PTrade {
   completedAt DateTime?
   cancelledAt DateTime?
   disputedAt DateTime?
+  disputeResolution P2PDisputeResolution?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@index([makerId, status])
@@ -218,4 +220,17 @@ model BillWebhookEvent {
   createdAt DateTime @default(now())
   @@index([paymentId, createdAt])
   @@map("bill_webhook_events")
+}
+
+model P2PDisputeResolution {
+  id String @id @default(cuid())
+  tradeId String @unique
+  trade P2PTrade @relation(fields: [tradeId], references: [id], onDelete: Restrict)
+  resolvedById String
+  resolvedBy User @relation("P2PResolver", fields: [resolvedById], references: [id], onDelete: Restrict)
+  outcome String
+  reason String
+  createdAt DateTime @default(now())
+  @@index([resolvedById, createdAt])
+  @@map("p2p_dispute_resolutions")
 }
