@@ -107,6 +107,7 @@ model P2POffer {
   pricePerCoin Decimal @db.Decimal(24, 2)
   availableAmountMin Decimal @db.Decimal(36, 18)
   availableAmountMax Decimal @db.Decimal(36, 18)
+  remainingAmount Decimal @db.Decimal(36, 18)
   limitFiatMin Decimal @db.Decimal(20, 2)
   limitFiatMax Decimal @db.Decimal(20, 2)
   paymentMethods String[]
