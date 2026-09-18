@@ -19,6 +19,11 @@ export class BillsController {
     return this.billsService.findBillers(country, categoryId);
   }
 
+  @Post('payments/:id/reconcile')
+  reconcile(@CurrentUser('userId') userId:string,@Param('id') id:string) {
+    return this.billsService.reconcilePayment(userId,id);
+  }
+
   @Get('payments/:id')
   getPayment(@CurrentUser('userId') userId:string,@Param('id') id:string) {
     return this.billsService.getPayment(userId,id);
