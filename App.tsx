@@ -10,6 +10,7 @@ import {
   Transaction, 
   UserProfile,
   P2PTradeType,
+  P2PTrade,
   AppNotification,
   TransactionType // Added TransactionType
 } from './types';
@@ -52,6 +53,7 @@ const App: React.FC = () => {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [walletData, setWalletData] = useState<WalletData | null>(null);
   const [transactions, setTransactions] = useState<Transaction[] | null>(null);
+  const [p2pTrades, setP2PTrades] = useState<P2PTrade[]>([]);
 
   // Gates the whole app behind auth. authChecking covers the brief window
   // where we're trying to silently restore a session from a stored refresh
@@ -95,6 +97,7 @@ const App: React.FC = () => {
       ]);
       setWalletData(fetchedWalletData);
       setTransactions(fetchedTransactions);
+      try { setP2PTrades(await apiService.fetchP2PTrades()); } catch { setP2PTrades([]); }
     } catch (err) {
       console.error("Failed to load initial data:", err);
       setError("Could not load app data. Please check your connection and try again.");
@@ -248,14 +251,13 @@ const App: React.FC = () => {
 
   const handleInitiateP2PTrade = async (offerId: string, cryptoSymbol: string, amount: string, tradeType: P2PTradeType) => {
     try {
-        const newTransaction = await apiService.initiateP2PTrade(offerId, amount, tradeType);
-        setTransactions(prev => prev ? [newTransaction, ...prev] : [newTransaction]);
-        const message = newTransaction.description ? 
-                        `P2P trade: ${newTransaction.description}. Status: ${newTransaction.status.toUpperCase()}` :
-                        `P2P ${tradeType} for ${amount} ${cryptoSymbol} initiated. Status: PENDING`;
-        addNotification(message, "success");
-        // Potentially update wallet data if P2P trades affect balance immediately (complex mock)
-        // setActiveTab(ActiveTab.HISTORY); // Navigate to history to see pending trade
+        const newTrade = await apiService.initiateP2PTrade(offerId, amount, tradeType);
+        setP2PTrades(prev => [newTrade, ...prev.filter(t => t.id !== newTrade.id)]);
+        addNotification(`P2P ${tradeType} for ${amount} ${cryptoSymbol} initiated. Crypto is now protected by escrow.`, "success");
+        if (userProfile) {
+          const refreshedWalletData = await apiService.fetchWalletData(userProfile.userId, userProfile.country);
+          setWalletData(refreshedWalletData);
+        }
     } catch (err: any) {
         addNotification(err.message || `Failed to initiate P2P ${tradeType}.`, "error");
     }
@@ -351,7 +353,7 @@ const App: React.FC = () => {
                   onPaymentSuccess={handleBillPaymentSuccess} 
                 />;
       case ActiveTab.TRADE:
-        return <P2PTrading userCountryInfo={currentCountryInfo} onInitiateTrade={handleInitiateP2PTrade}/>;
+        return <P2PTrading userCountryInfo={currentCountryInfo} trades={p2pTrades} onTradesChange={setP2PTrades} onInitiateTrade={handleInitiateP2PTrade}/>;
       case ActiveTab.HISTORY:
         return <TransactionHistory transactions={transactions} isLoading={isLoading && transactions === null} />;
       case ActiveTab.PROFILE:
