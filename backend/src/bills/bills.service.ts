@@ -40,6 +40,7 @@ export class BillsService {
     this.validateDetails(biller,dto.details);
     const amountFiat=this.billAmount(biller,dto.details);
     const isCrypto=SUPPORTED_CRYPTO_SYMBOLS.includes(dto.paymentAssetSymbol);
+    if(isCrypto) throw new BadRequestException('Crypto bill settlement is temporarily unavailable until a trusted fiat FX quote service is configured');
 
     const transaction=await this.prisma.$transaction(async tx=>{
       let paymentAmount=amountFiat, cryptoAmount=new Prisma.Decimal(0);
@@ -52,13 +53,13 @@ export class BillsService {
       }else{
         const debit=await tx.fiatAsset.updateMany({where:{userId,currencyCode:dto.paymentAssetSymbol,balance:{gte:amountFiat}},data:{balance:{decrement:amountFiat}}}); if(debit.count!==1) throw new BadRequestException(`Insufficient or unavailable ${dto.paymentAssetSymbol} balance`);
       }
-      const record=await tx.billPayment.create({data:{userId,billerId:biller.id,idempotencyKey:dto.idempotencyKey,paymentAssetSymbol:dto.paymentAssetSymbol,amountFiat,fiatCurrency:dto.paymentAssetSymbol,paymentAmount,details:dto.details,status:TransactionStatus.PENDING}});
-      const transaction=await this.transactionsService.create({userId,type:TransactionType.BILL_PAYMENT,cryptoSymbol:isCrypto?dto.paymentAssetSymbol:'',cryptoAmount,status:TransactionStatus.PENDING,fiatAmount:amountFiat,fiatCurrency:dto.paymentAssetSymbol,description:`Paid ${biller.name}`,billerName:biller.name,billDetails:dto.details},tx);
+      const record=await tx.billPayment.create({data:{userId,billerId:biller.id,idempotencyKey:dto.idempotencyKey,paymentAssetSymbol:dto.paymentAssetSymbol,amountFiat,fiatCurrency:biller.fiatCurrency,paymentAmount,details:dto.details,status:TransactionStatus.PENDING}});
+      const transaction=await this.transactionsService.create({userId,type:TransactionType.BILL_PAYMENT,cryptoSymbol:isCrypto?dto.paymentAssetSymbol:'',cryptoAmount,status:TransactionStatus.PENDING,fiatAmount:amountFiat,fiatCurrency:biller.fiatCurrency,description:`Paid ${biller.name}`,billerName:biller.name,billDetails:dto.details},tx);
       await tx.billPayment.update({where:{id:record.id},data:{transactionId:transaction.id,status:TransactionStatus.PROCESSING,processingAt:new Date()}});
       return {transaction,paymentId:record.id};
     });
     try {
-      const submission=await this.provider.submit({paymentId:transaction.paymentId,billerId:biller.id,amountFiat:amountFiat.toString(),fiatCurrency:biller.country,details:dto.details});
+      const submission=await this.provider.submit({paymentId:transaction.paymentId,billerId:biller.id,amountFiat:amountFiat.toString(),fiatCurrency:biller.fiatCurrency,details:dto.details});
       await this.prisma.billPayment.update({where:{id:transaction.paymentId},data:{providerReference:submission.providerReference}});
       if(submission.status==='COMPLETED') await this.completePayment(transaction.paymentId,submission.providerReference);
       if(submission.status==='FAILED') await this.failAndReversePayment(transaction.paymentId,submission.failureReason||'Provider rejected payment');
