@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { BillCategory, Biller, BillerField, UserProfile, WalletData, FiatAsset } from '../types';
 import { apiService } from '../services/apiService';
-import { MOCK_USD_TO_FIAT_RATES, SUPPORTED_CRYPTO_SYMBOLS, AFRICAN_COUNTRIES_DATA } from '../constants';
+import { SUPPORTED_CRYPTO_SYMBOLS, AFRICAN_COUNTRIES_DATA } from '../constants';
 import BillCategoryItem from './BillCategoryItem';
 import BillerItem from './BillerItem';
 import LoadingSpinner from './LoadingSpinner';
@@ -29,6 +29,7 @@ const BillPaymentsView: React.FC<BillPaymentsViewProps> = ({ userProfile, wallet
   
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [paymentAttemptKey, setPaymentAttemptKey] = useState<string | null>(null);
 
   const userCountry = userProfile?.country || 'Nigeria'; // Default for safety
   const userFiatCurrency = userProfile && AFRICAN_COUNTRIES_DATA[userProfile.country] ? AFRICAN_COUNTRIES_DATA[userProfile.country].currency : 'NGN';
@@ -123,56 +124,27 @@ const BillPaymentsView: React.FC<BillPaymentsViewProps> = ({ userProfile, wallet
     return parseFloat(formData.amount || '0');
   };
 
-  const calculatePaymentAmountGross = (): number => {
-      const billAmountFiat = getBillAmountFiat();
-      if (paymentAssetSymbol === userFiatCurrency) {
-          return billAmountFiat;
-      }
-      // Paying with crypto
-      const cryptoAsset = walletData?.crypto[paymentAssetSymbol];
-      const fiatToUsdRate = MOCK_USD_TO_FIAT_RATES[userFiatCurrency] || 1; // 1 if rate not found (bad mock)
-      if (cryptoAsset && cryptoAsset.price > 0 && fiatToUsdRate > 0) {
-          const billAmountUSD = billAmountFiat / fiatToUsdRate;
-          return billAmountUSD / cryptoAsset.price; // This is the crypto amount
-      }
-      return 0; // Should not happen if assets are validated
-  };
-  
-  const getCryptoToFiatRateDisplay = (): string | null => {
-    if (paymentAssetSymbol === userFiatCurrency || !walletData?.crypto[paymentAssetSymbol]) {
-        return null;
-    }
-    const cryptoPriceUSD = walletData.crypto[paymentAssetSymbol].price;
-    const fiatRateVsUSD = MOCK_USD_TO_FIAT_RATES[userFiatCurrency] || 1;
-    return `1 ${paymentAssetSymbol} ≈ ${(cryptoPriceUSD * fiatRateVsUSD).toLocaleString()} ${userFiatCurrency}`;
-  };
-
 
   const handlePaymentConfirm = async () => {
-    if (!userProfile || !selectedBiller) return;
+    if (!userProfile || !selectedBiller || !paymentAssetSymbol) return;
     setIsLoading(true);
     setError(null);
 
-    const billAmountFiat = getBillAmountFiat();
-    const paymentAmountGross = calculatePaymentAmountGross();
-
-    const payload = {
-      userId: userProfile.userId,
-      billerId: selectedBiller.id,
-      amountFiat: billAmountFiat,
-      fiatCurrency: userFiatCurrency,
-      paymentAssetSymbol: paymentAssetSymbol,
-      paymentAmountGross: paymentAmountGross,
-      details: formData,
-      cryptoToFiatRate: paymentAssetSymbol !== userFiatCurrency ? (walletData?.crypto[paymentAssetSymbol]?.price || 0) * (MOCK_USD_TO_FIAT_RATES[userFiatCurrency] || 1) : undefined,
-    };
+    const key = paymentAttemptKey || (globalThis.crypto?.randomUUID?.() ?? `bill-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    if (!paymentAttemptKey) setPaymentAttemptKey(key);
 
     try {
-      const transaction = await apiService.payBill(payload);
-      onPaymentSuccess(transaction); // Callback to App.tsx
+      const transaction = await apiService.payBill({
+        billerId: selectedBiller.id,
+        paymentAssetSymbol,
+        details: formData,
+        idempotencyKey: key,
+      });
+      onPaymentSuccess(transaction);
+      setPaymentAttemptKey(null);
       setCurrentStep('paymentSuccess');
     } catch (err: any) {
-      setError(err.message || "Payment failed. Please try again.");
+      setError(err.message || "Payment failed. You can safely retry this payment.");
     } finally {
       setIsLoading(false);
     }
@@ -185,6 +157,7 @@ const BillPaymentsView: React.FC<BillPaymentsViewProps> = ({ userProfile, wallet
     setFormData({});
     setError(null);
     setPaymentAssetSymbol('');
+    setPaymentAttemptKey(null);
   };
   
   const availablePaymentAssets = () => {
@@ -315,16 +288,13 @@ const BillPaymentsView: React.FC<BillPaymentsViewProps> = ({ userProfile, wallet
                   <option key={opt.symbol} value={opt.symbol}>{opt.name} (Bal: {opt.balance})</option>
               ))}
             </select>
-            {getCryptoToFiatRateDisplay() && (
-                <p className="text-xs text-gray-400 mb-1">{getCryptoToFiatRateDisplay()}</p>
-            )}
-            <p className="text-white text-lg font-semibold mb-4">
-                Total: {paymentAssetSymbol === userFiatCurrency ? userFiatSymbol : ''}{calculatePaymentAmountGross().toLocaleString(undefined, { maximumFractionDigits: paymentAssetSymbol === userFiatCurrency ? 2 : 8 })} {paymentAssetSymbol}
+            <p className="text-xs text-gray-400 mb-4">
+              The final {paymentAssetSymbol} amount is calculated securely by AfriCrypto when you submit the payment.
             </p>
           </div>
 
-          <button onClick={handlePaymentConfirm} className="w-full bg-green-500 hover:bg-green-600 text-white py-3 rounded-lg font-medium">
-            Pay Now
+          <button disabled={isLoading || !paymentAssetSymbol} onClick={handlePaymentConfirm} className="w-full bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white py-3 rounded-lg font-medium">
+            {isLoading ? 'Processing securely...' : 'Pay Now'}
           </button>
         </div>
       )}
