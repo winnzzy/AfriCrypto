@@ -48,11 +48,10 @@ export class BillsService {
         const debit=await tx.cryptoAsset.updateMany({where:{id:asset.id,balance:{gte:paymentAmount}},data:{balance:{decrement:paymentAmount}}}); if(debit.count!==1) throw new BadRequestException(`Insufficient ${dto.paymentAssetSymbol} balance`);
         cryptoAmount=paymentAmount;
       }else{
-        if(dto.paymentAssetSymbol!==biller.country && false){} // currency is validated by wallet existence below
         const debit=await tx.fiatAsset.updateMany({where:{userId,currencyCode:dto.paymentAssetSymbol,balance:{gte:amountFiat}},data:{balance:{decrement:amountFiat}}}); if(debit.count!==1) throw new BadRequestException(`Insufficient or unavailable ${dto.paymentAssetSymbol} balance`);
       }
-      const record=await tx.billPayment.create({data:{userId,billerId:biller.id,idempotencyKey:dto.idempotencyKey,paymentAssetSymbol:dto.paymentAssetSymbol,amountFiat,fiatCurrency:isCrypto?biller.country:dto.paymentAssetSymbol,paymentAmount,details:dto.details,status:TransactionStatus.PENDING}});
-      const transaction=await this.transactionsService.create({userId,type:TransactionType.BILL_PAYMENT,cryptoSymbol:isCrypto?dto.paymentAssetSymbol:'',cryptoAmount,status:TransactionStatus.COMPLETED,fiatAmount:amountFiat,fiatCurrency:isCrypto?biller.country:dto.paymentAssetSymbol,description:`Paid ${biller.name}`,billerName:biller.name,billDetails:dto.details},tx);
+      const record=await tx.billPayment.create({data:{userId,billerId:biller.id,idempotencyKey:dto.idempotencyKey,paymentAssetSymbol:dto.paymentAssetSymbol,amountFiat,fiatCurrency:dto.paymentAssetSymbol,paymentAmount,details:dto.details,status:TransactionStatus.PENDING}});
+      const transaction=await this.transactionsService.create({userId,type:TransactionType.BILL_PAYMENT,cryptoSymbol:isCrypto?dto.paymentAssetSymbol:'',cryptoAmount,status:TransactionStatus.COMPLETED,fiatAmount:amountFiat,fiatCurrency:dto.paymentAssetSymbol,description:`Paid ${biller.name}`,billerName:biller.name,billDetails:dto.details},tx);
       await tx.billPayment.update({where:{id:record.id},data:{transactionId:transaction.id,status:TransactionStatus.COMPLETED}});
       return transaction;
     });
