@@ -25,4 +25,5 @@ export abstract class BillProvider {
   abstract submit(request: BillProviderRequest): Promise<BillProviderSubmission>;
   abstract verifyWebhook(rawBody: Buffer, signature: string | undefined): boolean;
   abstract parseWebhook(rawBody: Buffer): BillProviderWebhook;
+  abstract getStatus(providerReference: string): Promise<BillProviderSubmission>;
 }
