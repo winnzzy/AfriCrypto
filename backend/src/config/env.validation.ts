@@ -35,6 +35,10 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   GEMINI_API_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  BILL_PROVIDER_WEBHOOK_SECRET?: string;
 }
 
 // Fails fast on boot if required secrets/config are missing, instead of
