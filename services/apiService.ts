@@ -9,6 +9,8 @@ import {
   TransactionStatus,
   TransactionType,
   P2PTradeType,
+  P2PTrade,
+  P2PTradeStatus,
   BillCategory,
   Biller,
   BillPaymentPayload,
@@ -111,6 +113,14 @@ async function apiFetch<T>(path: string, options: RequestInit = {}, allowRefresh
   if (!res.ok) throw new Error(await extractErrorMessage(res));
   if (res.status === 204) return undefined as unknown as T;
   return (await res.json()) as T;
+}
+
+function normalizeP2PTrade(raw: any): P2PTrade {
+  return {
+    ...raw,
+    type: String(raw.type).toLowerCase() as P2PTradeType,
+    status: String(raw.status).toLowerCase() as P2PTradeStatus,
+  };
 }
 
 function normalizeTransaction(raw: any): Transaction {
@@ -216,13 +226,30 @@ export const apiService = {
   getReceiveAddress: async (_userId: string, cryptoSymbol: string): Promise<ReceiveAddress> =>
     apiFetch<ReceiveAddress>(`/wallets/receive/${encodeURIComponent(cryptoSymbol)}`),
 
-  initiateP2PTrade: async (offerId: string, amount: string, _tradeType: P2PTradeType): Promise<Transaction> => {
-    const transaction = await apiFetch<any>('/p2p/trade', {
+  initiateP2PTrade: async (offerId: string, amount: string, _tradeType: P2PTradeType): Promise<P2PTrade> => {
+    const trade = await apiFetch<any>('/p2p/trade', {
       method: 'POST',
       body: JSON.stringify({ offerId, amount }),
     });
-    return normalizeTransaction(transaction);
+    return normalizeP2PTrade(trade);
   },
+
+  fetchP2PTrades: async (): Promise<P2PTrade[]> => {
+    const trades = await apiFetch<any[]>('/p2p/trades');
+    return trades.map(normalizeP2PTrade);
+  },
+
+  markP2PPayment: async (tradeId: string): Promise<P2PTrade> =>
+    normalizeP2PTrade(await apiFetch<any>(`/p2p/trades/${encodeURIComponent(tradeId)}/payment`, { method: 'POST' })),
+
+  releaseP2PCrypto: async (tradeId: string): Promise<P2PTrade> =>
+    normalizeP2PTrade(await apiFetch<any>(`/p2p/trades/${encodeURIComponent(tradeId)}/release`, { method: 'POST' })),
+
+  cancelP2PTrade: async (tradeId: string): Promise<P2PTrade> =>
+    normalizeP2PTrade(await apiFetch<any>(`/p2p/trades/${encodeURIComponent(tradeId)}/cancel`, { method: 'POST' })),
+
+  disputeP2PTrade: async (tradeId: string): Promise<P2PTrade> =>
+    normalizeP2PTrade(await apiFetch<any>(`/p2p/trades/${encodeURIComponent(tradeId)}/dispute`, { method: 'POST' })),
 
   fetchBillCategories: async (country: string): Promise<BillCategory[]> =>
     apiFetch<BillCategory[]>(`/bills/categories/${encodeURIComponent(country)}`),
