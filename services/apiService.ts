@@ -258,10 +258,9 @@ export const apiService = {
     apiFetch<Biller[]>(`/bills/billers/${encodeURIComponent(country)}/${encodeURIComponent(categoryId)}`),
 
   payBill: async (payload: BillPaymentPayload): Promise<Transaction> => {
-    const { userId: _userId, ...backendPayload } = payload;
     const transaction = await apiFetch<any>('/bills/pay', {
       method: 'POST',
-      body: JSON.stringify(backendPayload),
+      body: JSON.stringify(payload),
     });
     return normalizeTransaction(transaction);
   },
