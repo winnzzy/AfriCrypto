@@ -8,10 +8,36 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum TransactionType {\n  BUY\n  SELL\n  SEND\n  RECEIVE\n  P2P_BUY\n  P2P_SELL\n  BILL_PAYMENT\n}
-enum TransactionStatus {\n  PENDING\n  PROCESSING\n  COMPLETED\n  FAILED\n  REVERSED\n}
-enum P2PTradeType {\n  BUY\n  SELL\n}
-enum P2PTradeStatus {\n  AWAITING_PAYMENT\n  PAYMENT_MARKED\n  COMPLETED\n  CANCELLED\n  EXPIRED\n  DISPUTED\n  RESOLVED_BUYER\n  RESOLVED_SELLER\n}
+enum TransactionType {
+  BUY
+  SELL
+  SEND
+  RECEIVE
+  P2P_BUY
+  P2P_SELL
+  BILL_PAYMENT
+}
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REVERSED
+}
+enum P2PTradeType {
+  BUY
+  SELL
+}
+enum P2PTradeStatus {
+  AWAITING_PAYMENT
+  PAYMENT_MARKED
+  COMPLETED
+  CANCELLED
+  EXPIRED
+  DISPUTED
+  RESOLVED_BUYER
+  RESOLVED_SELLER
+}
 
 model User {
   id String @id @default(cuid())
