@@ -31,6 +31,7 @@ model User {
   fiatAssets FiatAsset[]
   transactions Transaction[]
   billPayments BillPayment[]
+  billWebhookEvents BillWebhookEvent[]
   p2pOffers P2POffer[]
   p2pTradesAsMaker P2PTrade[] @relation("P2PMaker")
   p2pTradesAsTaker P2PTrade[] @relation("P2PTaker")
@@ -197,9 +198,24 @@ model BillPayment {
   failedAt DateTime?
   reversedAt DateTime?
   status TransactionStatus @default(PENDING)
+  webhookEvents BillWebhookEvent[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@unique([userId, idempotencyKey])
   @@index([userId, createdAt])
   @@map("bill_payments")
+}
+
+model BillWebhookEvent {
+  id String @id @default(cuid())
+  eventKey String @unique
+  paymentId String
+  payment BillPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  providerReference String
+  status String
+  payloadHash String
+  processedAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([paymentId, createdAt])
+  @@map("bill_webhook_events")
 }
