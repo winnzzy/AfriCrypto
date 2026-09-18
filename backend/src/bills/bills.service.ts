@@ -30,9 +30,15 @@ export class BillsService {
     for(const field of fields){ const value=details[field.id]; if(field.required&&!String(value??'').trim()) throw new BadRequestException(`${field.label} is required`); if(value&&field.validationRegex){ try{ if(!new RegExp(field.validationRegex).test(String(value))) throw new BadRequestException(`${field.label} is invalid`); }catch(e){ if(e instanceof BadRequestException) throw e; } } }
   }
 
+  private async requireTransaction(userId:string,id:string):Promise<TransactionDto>{
+    const transaction=await this.transactionsService.findOne(userId,id);
+    if(!transaction) throw new NotFoundException('Bill payment transaction not found');
+    return transaction;
+  }
+
   async payBill(userId:string,dto:PayBillDto):Promise<TransactionDto>{
     const existing=await this.prisma.billPayment.findUnique({where:{userId_idempotencyKey:{userId,idempotencyKey:dto.idempotencyKey}}});
-    if(existing?.transactionId) return this.transactionsService.findOne(userId,existing.transactionId);
+    if(existing?.transactionId) return this.requireTransaction(userId,existing.transactionId);
     if(existing) throw new BadRequestException('This bill payment is already being processed');
 
     const biller=await this.prisma.biller.findUnique({where:{id:dto.billerId}}); if(!biller) throw new NotFoundException('Biller not found');
@@ -54,7 +60,7 @@ export class BillsService {
         const debit=await tx.fiatAsset.updateMany({where:{userId,currencyCode:dto.paymentAssetSymbol,balance:{gte:amountFiat}},data:{balance:{decrement:amountFiat}}}); if(debit.count!==1) throw new BadRequestException(`Insufficient or unavailable ${dto.paymentAssetSymbol} balance`);
       }
       const record=await tx.billPayment.create({data:{userId,billerId:biller.id,idempotencyKey:dto.idempotencyKey,paymentAssetSymbol:dto.paymentAssetSymbol,amountFiat,fiatCurrency:biller.fiatCurrency,paymentAmount,details:dto.details,status:TransactionStatus.PENDING}});
-      const transaction=await this.transactionsService.create({userId,type:TransactionType.BILL_PAYMENT,cryptoSymbol:isCrypto?dto.paymentAssetSymbol:'',cryptoAmount,status:TransactionStatus.PENDING,fiatAmount:amountFiat,fiatCurrency:biller.fiatCurrency,description:`Paid ${biller.name}`,billerName:biller.name,billDetails:dto.details},tx);
+      const transaction=await this.transactionsService.create({userId,type:TransactionType.BILL_PAYMENT,cryptoSymbol:isCrypto?dto.paymentAssetSymbol:'',cryptoAmount:cryptoAmount.toString(),status:TransactionStatus.PENDING,fiatAmount:amountFiat.toString(),fiatCurrency:biller.fiatCurrency,description:`Paid ${biller.name}`,billerName:biller.name,billDetails:dto.details},tx);
       await tx.billPayment.update({where:{id:record.id},data:{transactionId:transaction.id,status:TransactionStatus.PROCESSING,processingAt:new Date()}});
       return {transaction,paymentId:record.id};
     });
@@ -66,7 +72,7 @@ export class BillsService {
     } catch {
       // Keep PROCESSING: reconciliation/webhook can safely resolve an uncertain provider response.
     }
-    return this.transactionsService.findOne(userId,transaction.transaction.id);
+    return this.requireTransaction(userId,transaction.transaction.id);
   }
 
   async handleProviderWebhook(rawBody:Buffer,signature:string|undefined){
