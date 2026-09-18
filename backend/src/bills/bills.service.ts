@@ -51,9 +51,46 @@ export class BillsService {
         const debit=await tx.fiatAsset.updateMany({where:{userId,currencyCode:dto.paymentAssetSymbol,balance:{gte:amountFiat}},data:{balance:{decrement:amountFiat}}}); if(debit.count!==1) throw new BadRequestException(`Insufficient or unavailable ${dto.paymentAssetSymbol} balance`);
       }
       const record=await tx.billPayment.create({data:{userId,billerId:biller.id,idempotencyKey:dto.idempotencyKey,paymentAssetSymbol:dto.paymentAssetSymbol,amountFiat,fiatCurrency:dto.paymentAssetSymbol,paymentAmount,details:dto.details,status:TransactionStatus.PENDING}});
-      const transaction=await this.transactionsService.create({userId,type:TransactionType.BILL_PAYMENT,cryptoSymbol:isCrypto?dto.paymentAssetSymbol:'',cryptoAmount,status:TransactionStatus.COMPLETED,fiatAmount:amountFiat,fiatCurrency:dto.paymentAssetSymbol,description:`Paid ${biller.name}`,billerName:biller.name,billDetails:dto.details},tx);
-      await tx.billPayment.update({where:{id:record.id},data:{transactionId:transaction.id,status:TransactionStatus.COMPLETED}});
+      const transaction=await this.transactionsService.create({userId,type:TransactionType.BILL_PAYMENT,cryptoSymbol:isCrypto?dto.paymentAssetSymbol:'',cryptoAmount,status:TransactionStatus.PENDING,fiatAmount:amountFiat,fiatCurrency:dto.paymentAssetSymbol,description:`Paid ${biller.name}`,billerName:biller.name,billDetails:dto.details},tx);
+      await tx.billPayment.update({where:{id:record.id},data:{transactionId:transaction.id,status:TransactionStatus.PROCESSING,processingAt:new Date()}});
       return transaction;
+    });
+  }
+
+  async getPayment(userId:string,id:string){
+    const payment=await this.prisma.billPayment.findFirst({where:{id,userId}});
+    if(!payment) throw new NotFoundException('Bill payment not found');
+    return payment;
+  }
+
+  async completePayment(id:string,providerReference:string){
+    return this.prisma.$transaction(async tx=>{
+      const payment=await tx.billPayment.findUnique({where:{id}});
+      if(!payment) throw new NotFoundException('Bill payment not found');
+      if(payment.status===TransactionStatus.COMPLETED) return payment;
+      if(payment.status!==TransactionStatus.PROCESSING) throw new BadRequestException('Bill payment is not awaiting provider completion');
+      const claimed=await tx.billPayment.updateMany({where:{id,status:TransactionStatus.PROCESSING},data:{status:TransactionStatus.COMPLETED,providerReference,completedAt:new Date()}});
+      if(claimed.count!==1) return tx.billPayment.findUnique({where:{id}});
+      if(payment.transactionId) await tx.transaction.update({where:{id:payment.transactionId},data:{status:TransactionStatus.COMPLETED}});
+      return tx.billPayment.findUnique({where:{id}});
+    });
+  }
+
+  async failAndReversePayment(id:string,reason:string){
+    return this.prisma.$transaction(async tx=>{
+      const payment=await tx.billPayment.findUnique({where:{id}});
+      if(!payment) throw new NotFoundException('Bill payment not found');
+      if(payment.status===TransactionStatus.REVERSED) return payment;
+      if(payment.status!==TransactionStatus.PROCESSING) throw new BadRequestException('Bill payment cannot be reversed from its current state');
+      const claimed=await tx.billPayment.updateMany({where:{id,status:TransactionStatus.PROCESSING},data:{status:TransactionStatus.FAILED,failureReason:reason,failedAt:new Date()}});
+      if(claimed.count!==1) return tx.billPayment.findUnique({where:{id}});
+      if(SUPPORTED_CRYPTO_SYMBOLS.includes(payment.paymentAssetSymbol)){
+        await tx.cryptoAsset.update({where:{userId_symbol:{userId:payment.userId,symbol:payment.paymentAssetSymbol}},data:{balance:{increment:payment.paymentAmount}}});
+      }else{
+        await tx.fiatAsset.update({where:{userId_currencyCode:{userId:payment.userId,currencyCode:payment.paymentAssetSymbol}},data:{balance:{increment:payment.paymentAmount}}});
+      }
+      if(payment.transactionId) await tx.transaction.update({where:{id:payment.transactionId},data:{status:TransactionStatus.REVERSED,description:'Bill payment failed and funds were returned'}});
+      return tx.billPayment.update({where:{id},data:{status:TransactionStatus.REVERSED,reversedAt:new Date()}});
     });
   }
 }
