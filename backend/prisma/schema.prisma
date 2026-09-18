@@ -20,6 +20,7 @@ model User {
   username String
   country String
   isVerified Boolean @default(false)
+  isAdmin Boolean @default(false)
   p2pRating Float @default(0)
   p2pTrades Int @default(0)
   notificationsEnabled Boolean @default(true)
