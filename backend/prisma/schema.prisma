@@ -9,7 +9,7 @@ datasource db {
 }
 
 enum TransactionType { BUY SELL SEND RECEIVE P2P_BUY P2P_SELL BILL_PAYMENT }
-enum TransactionStatus { PENDING COMPLETED FAILED }
+enum TransactionStatus { PENDING PROCESSING COMPLETED FAILED REVERSED }
 enum P2PTradeType { BUY SELL }
 enum P2PTradeStatus { AWAITING_PAYMENT PAYMENT_MARKED COMPLETED CANCELLED EXPIRED DISPUTED }
 
@@ -190,6 +190,12 @@ model BillPayment {
   paymentAmount Decimal @db.Decimal(36, 18)
   details Json
   transactionId String? @unique
+  providerReference String? @unique
+  failureReason String?
+  processingAt DateTime?
+  completedAt DateTime?
+  failedAt DateTime?
+  reversedAt DateTime?
   status TransactionStatus @default(PENDING)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
