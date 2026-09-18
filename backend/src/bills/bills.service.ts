@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, TransactionStatus, TransactionType } from '@prisma/client';
+import { createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { TransactionsService, TransactionDto } from '../transactions/transactions.service';
 import { SUPPORTED_CRYPTO_SYMBOLS } from '../common/default-assets';
@@ -73,8 +74,25 @@ export class BillsService {
     const payment=await this.prisma.billPayment.findUnique({where:{id:event.paymentId}});
     if(!payment) throw new NotFoundException('Bill payment not found');
     if(payment.providerReference&&payment.providerReference!==event.providerReference) throw new BadRequestException('Provider reference mismatch');
-    if(event.status==='COMPLETED') return this.completePayment(event.paymentId,event.providerReference);
-    return this.failAndReversePayment(event.paymentId,event.failureReason||'Provider reported payment failure');
+    const payloadHash=createHash('sha256').update(rawBody).digest('hex');
+    const eventKey=createHash('sha256').update(`${event.paymentId}:${event.providerReference}:${event.status}:${payloadHash}`).digest('hex');
+    try{ await this.prisma.billWebhookEvent.create({data:{eventKey,paymentId:event.paymentId,providerReference:event.providerReference,status:event.status,payloadHash}}); }
+    catch(e){ if(e instanceof Prisma.PrismaClientKnownRequestError&&e.code==='P2002') return {received:true,duplicate:true}; throw e; }
+    let result;
+    if(event.status==='COMPLETED') result=await this.completePayment(event.paymentId,event.providerReference);
+    else result=await this.failAndReversePayment(event.paymentId,event.failureReason||'Provider reported payment failure');
+    await this.prisma.billWebhookEvent.update({where:{eventKey},data:{processedAt:new Date()}});
+    return result;
+  }
+
+  async reconcilePayment(userId:string,id:string){
+    const payment=await this.prisma.billPayment.findFirst({where:{id,userId}});
+    if(!payment) throw new NotFoundException('Bill payment not found');
+    if(payment.status!==TransactionStatus.PROCESSING||!payment.providerReference) return payment;
+    const result=await this.provider.getStatus(payment.providerReference);
+    if(result.status==='COMPLETED') return this.completePayment(id,payment.providerReference);
+    if(result.status==='FAILED') return this.failAndReversePayment(id,result.failureReason||'Provider reconciliation reported failure');
+    return payment;
   }
 
   async getPayment(userId:string,id:string){
