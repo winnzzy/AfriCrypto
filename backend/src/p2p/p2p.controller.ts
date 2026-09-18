@@ -4,6 +4,7 @@ import { P2pService } from './p2p.service';
 import { QueryOffersDto } from './dto/query-offers.dto';
 import { CreateOfferDto } from './dto/create-offer.dto';
 import { InitiateTradeDto } from './dto/initiate-trade.dto';
+import { ResolveDisputeDto } from './dto/resolve-dispute.dto';
 
 @Controller('p2p')
 export class P2pController {
@@ -15,5 +16,7 @@ export class P2pController {
   @Post('trades/:id/payment') markPayment(@CurrentUser('userId') userId: string, @Param('id') id: string) { return this.p2pService.markPayment(userId, id); }
   @Post('trades/:id/release') releaseCrypto(@CurrentUser('userId') userId: string, @Param('id') id: string) { return this.p2pService.releaseCrypto(userId, id); }
   @Post('trades/:id/cancel') cancelTrade(@CurrentUser('userId') userId: string, @Param('id') id: string) { return this.p2pService.cancelTrade(userId, id); }
+  @Post('admin/trades/:id/resolve')
+  resolveDispute(@CurrentUser('userId') userId:string,@Param('id') id:string,@Body() dto:ResolveDisputeDto) { return this.p2pService.resolveDispute(userId,id,dto.outcome,dto.reason); }
   @Post('trades/:id/dispute') disputeTrade(@CurrentUser('userId') userId: string, @Param('id') id: string) { return this.p2pService.disputeTrade(userId, id); }
 }
