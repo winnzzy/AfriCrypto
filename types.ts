@@ -132,6 +132,39 @@ export enum P2PTradeType {
   SELL = 'sell',
 }
 
+export enum P2PTradeStatus {
+  AWAITING_PAYMENT = 'awaiting_payment',
+  PAYMENT_MARKED = 'payment_marked',
+  COMPLETED = 'completed',
+  CANCELLED = 'cancelled',
+  EXPIRED = 'expired',
+  DISPUTED = 'disputed',
+}
+
+export interface P2PTrade {
+  id: string;
+  offerId: string;
+  makerId: string;
+  takerId: string;
+  type: P2PTradeType;
+  cryptoSymbol: string;
+  fiatCurrency: string;
+  pricePerCoin: string;
+  cryptoAmount: string;
+  fiatAmount: string;
+  paymentMethods: string[];
+  status: P2PTradeStatus;
+  expiresAt: string;
+  paymentMarkedAt?: string | null;
+  completedAt?: string | null;
+  cancelledAt?: string | null;
+  disputedAt?: string | null;
+  escrowFundedAt?: string | null;
+  escrowReleasedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AppNotification {
   id: string;
   message: string;
