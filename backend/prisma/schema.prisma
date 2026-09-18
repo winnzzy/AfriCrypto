@@ -58,7 +58,6 @@ model User {
   fiatAssets FiatAsset[]
   transactions Transaction[]
   billPayments BillPayment[]
-  billWebhookEvents BillWebhookEvent[]
   p2pOffers P2POffer[]
   p2pTradesAsMaker P2PTrade[] @relation("P2PMaker")
   p2pTradesAsTaker P2PTrade[] @relation("P2PTaker")
