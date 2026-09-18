@@ -1,27 +1,16 @@
-import { IsNumber, IsObject, IsOptional, IsString, Min } from 'class-validator';
+import { IsObject, IsString, Matches } from 'class-validator';
 
 export class PayBillDto {
   @IsString()
   billerId: string;
 
-  @IsNumber()
-  @Min(0)
-  amountFiat: number;
-
-  @IsString()
-  fiatCurrency: string;
-
   @IsString()
   paymentAssetSymbol: string;
-
-  @IsNumber()
-  @Min(0)
-  paymentAmountGross: number;
 
   @IsObject()
   details: Record<string, string>;
 
-  @IsOptional()
-  @IsNumber()
-  cryptoToFiatRate?: number;
+  @IsString()
+  @Matches(/^[A-Za-z0-9._:-]{8,128}$/)
+  idempotencyKey: string;
 }
