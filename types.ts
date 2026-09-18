@@ -163,6 +163,13 @@ export interface P2PTrade {
   escrowReleasedAt?: string | null;
   createdAt: string;
   updatedAt: string;
+  role: 'BUYER' | 'SELLER';
+  buyerId: string;
+  sellerId: string;
+  canMarkPayment: boolean;
+  canRelease: boolean;
+  canCancel: boolean;
+  canDispute: boolean;
 }
 
 export interface AppNotification {
