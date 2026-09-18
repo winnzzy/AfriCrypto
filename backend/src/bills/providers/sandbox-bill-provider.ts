@@ -11,6 +11,10 @@ export class SandboxBillProvider extends BillProvider {
     return { providerReference: `sandbox-${request.paymentId}`, status: 'PROCESSING' };
   }
 
+  async getStatus(providerReference:string): Promise<BillProviderSubmission> {
+    return {providerReference,status:'PROCESSING'};
+  }
+
   verifyWebhook(rawBody: Buffer, signature: string | undefined): boolean {
     const secret=this.config.get<string>('BILL_PROVIDER_WEBHOOK_SECRET');
     if(!secret||!signature) return false;
