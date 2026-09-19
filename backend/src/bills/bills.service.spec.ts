@@ -42,6 +42,25 @@ describe('BillsService financial controls',()=>{
     expect(provider.submit).toHaveBeenCalledWith(expect.objectContaining({fiatCurrency:'NGN',amountFiat:'500'}));
   });
 
+  it('keeps a timed-out provider submission processing for later reconciliation',async()=>{
+    prisma.billPayment.findUnique.mockResolvedValue(null); prisma.biller.findUnique.mockResolvedValue(biller);
+    prisma.fiatAsset.updateMany.mockResolvedValue({count:1}); prisma.billPayment.create.mockResolvedValue({id:'bp1'});
+    transactions.create.mockResolvedValue({id:'tx1'}); prisma.billPayment.update.mockResolvedValue({});
+    provider.submit.mockRejectedValue(new Error('provider timeout'));
+    transactions.findOne.mockResolvedValue({id:'tx1',status:TransactionStatus.PENDING});
+    await expect(service.payBill('u1',{billerId:'mtn',paymentAssetSymbol:'NGN',details:{amount:'500'},idempotencyKey:'attempt-timeout'})).resolves.toEqual({id:'tx1',status:TransactionStatus.PENDING});
+    expect(prisma.billPayment.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces provider-reference persistence failures after provider acknowledgement',async()=>{
+    prisma.billPayment.findUnique.mockResolvedValue(null); prisma.biller.findUnique.mockResolvedValue(biller);
+    prisma.fiatAsset.updateMany.mockResolvedValue({count:1}); prisma.billPayment.create.mockResolvedValue({id:'bp1'});
+    transactions.create.mockResolvedValue({id:'tx1'});
+    prisma.billPayment.update.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('database write failed'));
+    provider.submit.mockResolvedValue({providerReference:'ref1',status:'PROCESSING'});
+    await expect(service.payBill('u1',{billerId:'mtn',paymentAssetSymbol:'NGN',details:{amount:'500'},idempotencyKey:'attempt-db-fail'})).rejects.toThrow('database write failed');
+  });
+
   it('rejects unsupported cross-currency fiat settlement',async()=>{
     const crossCurrency={...biller,paymentAssetSymbols:['NGN','KES']};
     prisma.billPayment.findUnique.mockResolvedValue(null); prisma.biller.findUnique.mockResolvedValue(crossCurrency);
