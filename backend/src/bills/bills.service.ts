@@ -65,14 +65,20 @@ export class BillsService {
       await tx.billPayment.update({where:{id:record.id},data:{transactionId:transaction.id,status:TransactionStatus.PROCESSING,processingAt:new Date()}});
       return {transaction,paymentId:record.id};
     });
+    let submission;
     try {
-      const submission=await this.provider.submit({paymentId:transaction.paymentId,billerId:biller.id,amountFiat:amountFiat.toString(),fiatCurrency:biller.fiatCurrency,details:dto.details});
-      await this.prisma.billPayment.update({where:{id:transaction.paymentId},data:{providerReference:submission.providerReference}});
-      if(submission.status==='COMPLETED') await this.completePayment(transaction.paymentId,submission.providerReference);
-      if(submission.status==='FAILED') await this.failAndReversePayment(transaction.paymentId,submission.failureReason||'Provider rejected payment');
+      submission=await this.provider.submit({paymentId:transaction.paymentId,billerId:biller.id,amountFiat:amountFiat.toString(),fiatCurrency:biller.fiatCurrency,details:dto.details});
     } catch {
-      // Keep PROCESSING: reconciliation/webhook can safely resolve an uncertain provider response.
+      // A provider timeout can be ambiguous: the provider may have accepted the request.
+      // Keep PROCESSING so a webhook or explicit reconciliation can resolve it safely.
+      return this.requireTransaction(userId,transaction.transaction.id);
     }
+
+    // Do not swallow internal persistence/settlement failures. Once the provider has
+    // acknowledged the request, losing its reference would make reconciliation unsafe.
+    await this.prisma.billPayment.update({where:{id:transaction.paymentId},data:{providerReference:submission.providerReference}});
+    if(submission.status==='COMPLETED') await this.completePayment(transaction.paymentId,submission.providerReference);
+    if(submission.status==='FAILED') await this.failAndReversePayment(transaction.paymentId,submission.failureReason||'Provider rejected payment');
     return this.requireTransaction(userId,transaction.transaction.id);
   }
 
