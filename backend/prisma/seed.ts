@@ -45,6 +45,9 @@ const billers = [
     fields: [
       { id: 'smartcardNumber', label: 'Smartcard Number', type: 'text', placeholder: 'Enter smartcard number', required: true },
       { id: 'bouquet', label: 'Bouquet', type: 'select', options: [{ value: 'compact', label: 'Compact' }, { value: 'premium', label: 'Premium' }], required: true },
+      // Pricing is provider-controlled. Until a live catalogue is integrated, collect
+      // the amount explicitly instead of inventing bouquet prices in application code.
+      { id: 'amount', label: 'Amount', type: 'number', placeholder: 'Enter subscription amount', required: true },
     ],
     paymentAssetSymbols: ['NGN'],
   },
