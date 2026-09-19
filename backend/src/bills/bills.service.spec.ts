@@ -13,7 +13,7 @@ describe('BillsService financial controls',()=>{
       fiatAsset:{updateMany:jest.fn(),update:jest.fn()},
       cryptoAsset:{findUnique:jest.fn(),updateMany:jest.fn(),update:jest.fn()},
       transaction:{update:jest.fn()},
-      billWebhookEvent:{create:jest.fn(),update:jest.fn()},
+      billWebhookEvent:{create:jest.fn(),update:jest.fn(),findUnique:jest.fn()},
     };
     prisma.$transaction=jest.fn(async(cb:any)=>cb(prisma));
     transactions={create:jest.fn(),findOne:jest.fn()};
@@ -40,6 +40,40 @@ describe('BillsService financial controls',()=>{
     await service.payBill('u1',{billerId:'mtn',paymentAssetSymbol:'NGN',details:{amount:'500'},idempotencyKey:'attempt-12345'});
     expect(prisma.billPayment.create).toHaveBeenCalledWith({data:expect.objectContaining({fiatCurrency:'NGN',amountFiat:d('500')})});
     expect(provider.submit).toHaveBeenCalledWith(expect.objectContaining({fiatCurrency:'NGN',amountFiat:'500'}));
+  });
+
+  it('rejects unsupported cross-currency fiat settlement',async()=>{
+    const crossCurrency={...biller,paymentAssetSymbols:['NGN','KES']};
+    prisma.billPayment.findUnique.mockResolvedValue(null); prisma.biller.findUnique.mockResolvedValue(crossCurrency);
+    await expect(service.payBill('u1',{billerId:'mtn',paymentAssetSymbol:'KES',details:{amount:'500'},idempotencyKey:'attempt-12345'})).rejects.toThrow('Cross-currency fiat bill settlement is not supported');
+    expect(prisma.fiatAsset.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('retries a recorded but unprocessed provider webhook',async()=>{
+    const duplicate=new Prisma.PrismaClientKnownRequestError('duplicate',{code:'P2002',clientVersion:'5.22.0'});
+    prisma.billWebhookEvent.create.mockRejectedValue(duplicate);
+    prisma.billWebhookEvent.findUnique.mockResolvedValue({processedAt:null});
+    prisma.billWebhookEvent.update.mockResolvedValue({});
+    provider.verifyWebhook.mockReturnValue(true);
+    provider.parseWebhook.mockReturnValue({paymentId:'bp1',providerReference:'ref1',status:'COMPLETED'});
+    prisma.billPayment.findUnique.mockResolvedValue({id:'bp1',providerReference:'ref1',status:TransactionStatus.PROCESSING,transactionId:'tx1'});
+    prisma.billPayment.updateMany.mockResolvedValue({count:1});
+    prisma.transaction.update.mockResolvedValue({});
+    const complete=jest.spyOn(service,'completePayment');
+    await service.handleProviderWebhook(Buffer.from('payload'),'sig');
+    expect(complete).toHaveBeenCalledWith('bp1','ref1');
+    expect(prisma.billWebhookEvent.update).toHaveBeenCalledWith(expect.objectContaining({where:expect.any(Object),data:{processedAt:expect.any(Date)}}));
+  });
+
+  it('does not reprocess an already processed duplicate webhook',async()=>{
+    const duplicate=new Prisma.PrismaClientKnownRequestError('duplicate',{code:'P2002',clientVersion:'5.22.0'});
+    prisma.billWebhookEvent.create.mockRejectedValue(duplicate);
+    prisma.billWebhookEvent.findUnique.mockResolvedValue({processedAt:new Date()});
+    provider.verifyWebhook.mockReturnValue(true);
+    provider.parseWebhook.mockReturnValue({paymentId:'bp1',providerReference:'ref1',status:'COMPLETED'});
+    prisma.billPayment.findUnique.mockResolvedValue({id:'bp1',providerReference:'ref1'});
+    await expect(service.handleProviderWebhook(Buffer.from('payload'),'sig')).resolves.toEqual({received:true,duplicate:true});
+    expect(prisma.billPayment.updateMany).not.toHaveBeenCalled();
   });
 
   it('reverses a failed fiat payment exactly once',async()=>{
