@@ -14,6 +14,7 @@ import {
   BillCategory,
   Biller,
   BillPaymentPayload,
+  BillPayment,
 } from '../types';
 
 const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000/api';
@@ -263,5 +264,15 @@ export const apiService = {
       body: JSON.stringify(payload),
     });
     return normalizeTransaction(transaction);
+  },
+
+  fetchBillPayment: async (paymentId: string): Promise<BillPayment> => {
+    const payment = await apiFetch<any>(`/bills/payments/${encodeURIComponent(paymentId)}`);
+    return { ...payment, status: String(payment.status).toLowerCase() as TransactionStatus };
+  },
+
+  reconcileBillPayment: async (paymentId: string): Promise<BillPayment> => {
+    const payment = await apiFetch<any>(`/bills/payments/${encodeURIComponent(paymentId)}/reconcile`, { method: 'POST' });
+    return { ...payment, status: String(payment.status).toLowerCase() as TransactionStatus };
   },
 };
