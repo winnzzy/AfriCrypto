@@ -42,7 +42,7 @@ enum P2PTradeStatus {
 model User {
   id String @id @default(cuid())
   email String @unique
-  passwordHash String
+  passwordHash String?
   username String
   country String
   isVerified Boolean @default(false)
@@ -63,7 +63,22 @@ model User {
   p2pTradesAsTaker P2PTrade[] @relation("P2PTaker")
   refreshTokens RefreshToken[]
   p2pDisputeResolutions P2PDisputeResolution[] @relation("P2PResolver")
+  socialAccounts SocialAccount[]
   @@map("users")
+}
+
+model SocialAccount {
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider String
+  providerAccountId String
+  email String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("social_accounts")
 }
 
 model RefreshToken {
