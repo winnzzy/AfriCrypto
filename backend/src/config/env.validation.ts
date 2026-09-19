@@ -34,6 +34,22 @@ class EnvironmentVariables {
   // this is missing instead of the app failing to boot.
   @IsOptional()
   @IsString()
+  GOOGLE_CLIENT_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  FACEBOOK_APP_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  FACEBOOK_APP_SECRET?: string;
+
+  @IsOptional()
+  @IsString()
+  APPLE_CLIENT_ID?: string;
+
+  @IsOptional()
+  @IsString()
   GEMINI_API_KEY?: string;
 
   @IsOptional()
