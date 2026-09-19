@@ -10,6 +10,12 @@ export default () => ({
     refreshSecret: process.env.JWT_REFRESH_SECRET,
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
   },
+  social: {
+    googleClientId: process.env.GOOGLE_CLIENT_ID,
+    facebookAppId: process.env.FACEBOOK_APP_ID,
+    facebookAppSecret: process.env.FACEBOOK_APP_SECRET,
+    appleClientId: process.env.APPLE_CLIENT_ID,
+  },
   gemini: {
     // Optional: without it, MarketService disables the feature instead of
     // failing to boot (it's a nice-to-have, not core to the app).
