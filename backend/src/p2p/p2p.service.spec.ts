@@ -4,7 +4,7 @@ import { P2pService } from './p2p.service';
 
 const d = (v: string) => new Prisma.Decimal(v);
 
-function offer(type = P2PTradeType.SELL) {
+function offer(type: P2PTradeType = P2PTradeType.SELL) {
   return {
     id: 'offer-1', traderId: 'maker', type, cryptoSymbol: 'USDT', fiatCurrency: 'NGN',
     pricePerCoin: d('1500'), availableAmountMin: d('10'), availableAmountMax: d('100'),
@@ -13,7 +13,7 @@ function offer(type = P2PTradeType.SELL) {
   };
 }
 
-function trade(status = P2PTradeStatus.AWAITING_PAYMENT, type = P2PTradeType.SELL) {
+function trade(status: P2PTradeStatus = P2PTradeStatus.AWAITING_PAYMENT, type: P2PTradeType = P2PTradeType.SELL) {
   return {
     id: 'trade-1', makerId: 'maker', takerId: 'taker', type, cryptoSymbol: 'USDT',
     cryptoAmount: d('20'), fiatAmount: d('30000'), fiatCurrency: 'NGN', status,
