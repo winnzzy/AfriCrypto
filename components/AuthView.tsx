@@ -85,6 +85,25 @@ const AuthView: React.FC<AuthViewProps> = ({ onAuthenticated }) => {
             </button>
           </div>
 
+          <div className="space-y-3 mb-5">
+            <button type="button" disabled className="w-full bg-white text-slate-900 py-3 rounded-xl font-medium flex items-center justify-center gap-3 disabled:opacity-90">
+              <span className="font-bold text-lg">G</span><span>Continue with Google</span>
+            </button>
+            <button type="button" disabled className="w-full bg-black border border-slate-600 text-white py-3 rounded-xl font-medium flex items-center justify-center gap-3 disabled:opacity-90">
+              <span className="text-xl">●</span><span>Continue with Apple</span>
+            </button>
+            <button type="button" disabled className="w-full bg-blue-600 text-white py-3 rounded-xl font-medium flex items-center justify-center gap-3 disabled:opacity-90">
+              <span className="font-bold text-lg">f</span><span>Continue with Facebook</span>
+            </button>
+            <p className="text-center text-xs text-gray-500">Social sign-in is being connected securely. Email access remains available below.</p>
+          </div>
+
+          <div className="flex items-center gap-3 mb-5">
+            <div className="h-px bg-slate-700 flex-1" />
+            <span className="text-xs uppercase tracking-wider text-gray-500">or continue with email</span>
+            <div className="h-px bg-slate-700 flex-1" />
+          </div>
+
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label htmlFor="auth-email" className="text-gray-400 text-sm mb-1 block">Email</label>
