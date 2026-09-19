@@ -27,6 +27,8 @@ export enum TransactionStatus {
   COMPLETED = 'completed',
   PENDING = 'pending',
   FAILED = 'failed',
+  PROCESSING = 'processing',
+  REVERSED = 'reversed',
 }
 
 export enum TransactionType {
@@ -221,12 +223,26 @@ export interface Biller {
 }
 
 export interface BillPaymentPayload {
+  billerId: string;
+  paymentAssetSymbol: string;
+  details: Record<string, string>;
+  idempotencyKey: string;
+}
+
+export interface BillPayment {
+  id: string;
   userId: string;
   billerId: string;
-  amountFiat: number; // The actual amount of the bill in fiat
-  fiatCurrency: string; // The currency of the bill (e.g., NGN)
-  paymentAssetSymbol: string; // Symbol of asset used for payment (e.g., 'NGN' or 'USDT')
-  paymentAmountGross: number; // Amount deducted from user's wallet (could be crypto or fiat)
-  details: Record<string, string>; // Key-value pairs of BillerField.id and user input
-  cryptoToFiatRate?: number; // If paid with crypto, the conversion rate used
+  transactionId?: string | null;
+  providerReference?: string | null;
+  paymentAssetSymbol: string;
+  amountFiat: string;
+  fiatCurrency: string;
+  paymentAmount: string;
+  status: TransactionStatus;
+  failureReason?: string | null;
+  processingAt?: string | null;
+  completedAt?: string | null;
+  failedAt?: string | null;
+  reversedAt?: string | null;
 }
