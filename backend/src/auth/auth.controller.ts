@@ -3,6 +3,7 @@ import { AuthService } from './auth.service';
 import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { SocialAuthDto } from './dto/social-auth.dto';
 import { Public } from './decorators/public.decorator';
 
 @Controller('auth')
@@ -20,6 +21,13 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
+  }
+
+  @Public()
+  @Post('social')
+  @HttpCode(HttpStatus.OK)
+  social(@Body() dto: SocialAuthDto) {
+    return this.authService.social(dto);
   }
 
   @Public()
