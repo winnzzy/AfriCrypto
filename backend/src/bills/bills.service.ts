@@ -47,6 +47,7 @@ export class BillsService {
     const amountFiat=this.billAmount(biller,dto.details);
     const isCrypto=SUPPORTED_CRYPTO_SYMBOLS.includes(dto.paymentAssetSymbol);
     if(isCrypto) throw new BadRequestException('Crypto bill settlement is temporarily unavailable until a trusted fiat FX quote service is configured');
+    if(dto.paymentAssetSymbol!==biller.fiatCurrency) throw new BadRequestException('Cross-currency fiat bill settlement is not supported');
 
     const transaction=await this.prisma.$transaction(async tx=>{
       let paymentAmount=amountFiat, cryptoAmount=new Prisma.Decimal(0);
@@ -84,7 +85,14 @@ export class BillsService {
     const payloadHash=createHash('sha256').update(rawBody).digest('hex');
     const eventKey=createHash('sha256').update(`${event.paymentId}:${event.providerReference}:${event.status}:${payloadHash}`).digest('hex');
     try{ await this.prisma.billWebhookEvent.create({data:{eventKey,paymentId:event.paymentId,providerReference:event.providerReference,status:event.status,payloadHash}}); }
-    catch(e){ if(e instanceof Prisma.PrismaClientKnownRequestError&&e.code==='P2002') return {received:true,duplicate:true}; throw e; }
+    catch(e){
+      if(e instanceof Prisma.PrismaClientKnownRequestError&&e.code==='P2002'){
+        const existing=await this.prisma.billWebhookEvent.findUnique({where:{eventKey}});
+        if(existing?.processedAt) return {received:true,duplicate:true};
+        // The event was recorded but settlement did not finish. Retry it safely;
+        // complete/reverse use conditional state transitions and are idempotent.
+      }else throw e;
+    }
     let result;
     if(event.status==='COMPLETED') result=await this.completePayment(event.paymentId,event.providerReference);
     else result=await this.failAndReversePayment(event.paymentId,event.failureReason||'Provider reported payment failure');
