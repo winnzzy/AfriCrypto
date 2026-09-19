@@ -10,6 +10,7 @@ import { WalletsService } from '../wallets/wallets.service';
 import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { SocialAuthDto } from './dto/social-auth.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
 
 const PASSWORD_SALT_ROUNDS = 10;
@@ -69,6 +70,63 @@ export class AuthService {
     if (!passwordMatches) throw new UnauthorizedException('Invalid credentials');
 
     return this.buildAuthResponse(user);
+  }
+
+  async social(dto: SocialAuthDto): Promise<TokenPair & { profile: UserProfileDto }> {
+    const identity = await this.verifySocialIdentity(dto);
+    const existingSocial = await this.prisma.socialAccount.findUnique({
+      where: { provider_providerAccountId: { provider: dto.provider, providerAccountId: identity.id } },
+      include: { user: true },
+    });
+    if (existingSocial) return this.buildAuthResponse(existingSocial.user);
+
+    if (!identity.email || !identity.emailVerified) {
+      throw new UnauthorizedException('The social provider did not return a verified email address');
+    }
+
+    let user = await this.prisma.user.findUnique({ where: { email: identity.email } });
+    if (!user) {
+      if (!dto.country) throw new ConflictException('Country is required when creating a new social account');
+      const username = identity.email.split('@')[0];
+      user = await this.prisma.user.create({
+        data: { email: identity.email, passwordHash: null, username, country: dto.country, isVerified: true, avatarInitial: username.charAt(0).toUpperCase() },
+      });
+      await this.walletsService.ensureDefaultWallet(user.id, user.country);
+    }
+
+    await this.prisma.socialAccount.create({
+      data: { userId: user.id, provider: dto.provider, providerAccountId: identity.id, email: identity.email },
+    });
+    return this.buildAuthResponse(user);
+  }
+
+  private async verifySocialIdentity(dto: SocialAuthDto): Promise<{ id: string; email?: string; emailVerified: boolean }> {
+    if (dto.provider === 'google') {
+      const clientId = this.config.get<string>('social.googleClientId');
+      if (!clientId) throw new UnauthorizedException('Google sign-in is not configured');
+      const res = await fetch('https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(dto.credential));
+      if (!res.ok) throw new UnauthorizedException('Invalid Google credential');
+      const claims = await res.json() as any;
+      if (claims.aud !== clientId || !claims.sub) throw new UnauthorizedException('Invalid Google credential');
+      return { id: claims.sub, email: claims.email, emailVerified: claims.email_verified === 'true' || claims.email_verified === true };
+    }
+
+    if (dto.provider === 'facebook') {
+      const appId = this.config.get<string>('social.facebookAppId');
+      const appSecret = this.config.get<string>('social.facebookAppSecret');
+      if (!appId || !appSecret) throw new UnauthorizedException('Facebook sign-in is not configured');
+      const debug = await fetch('https://graph.facebook.com/debug_token?input_token=' + encodeURIComponent(dto.credential) + '&access_token=' + encodeURIComponent(appId + '|' + appSecret));
+      const debugBody = await debug.json() as any;
+      if (!debug.ok || !debugBody?.data?.is_valid || debugBody.data.app_id !== appId) throw new UnauthorizedException('Invalid Facebook credential');
+      const profile = await fetch('https://graph.facebook.com/me?fields=id,email&access_token=' + encodeURIComponent(dto.credential));
+      const claims = await profile.json() as any;
+      if (!profile.ok || !claims.id) throw new UnauthorizedException('Invalid Facebook credential');
+      return { id: claims.id, email: claims.email, emailVerified: !!claims.email };
+    }
+
+    // Apple identity tokens require signature/JWKS verification. Fail closed until
+    // that verifier is configured rather than accepting an unverified JWT.
+    throw new UnauthorizedException('Apple sign-in verification is not configured yet');
   }
 
   async refresh(dto: RefreshTokenDto): Promise<TokenPair> {
